@@ -1,11 +1,13 @@
 Nebula Browser
 =============
 
-![Alt text](/screen01.png?raw=true "Nebula Browser on Apple TV")
+![Browsing on Apple TV](/screen01.png?raw=true "Nebula Browser on Apple TV")
 
-![Alt text](/screen02.png?raw=true "Nebula Browser Tab Switcher")
+![Tab overview](/screen02.png?raw=true "Nebula Browser tab overview")
 
-![Alt text](/screen03.png?raw=true "Nebula Browser Menu")
+![Settings menu](/screen03.png?raw=true "Nebula Browser settings menu")
+
+![Full screen video player](/screen04.png?raw=true "Nebula Browser video player")
 
 
 ***Nebula Browser*** is a web browser for Apple TV devices running tvOS. It uses private API's that Apple normally does not allow in App Store distributed apps. Highlights:
@@ -26,6 +28,8 @@ Support
 Nebula Browser is free and open source — you build it yourself from this repo, nothing to buy. If you enjoy it and want to support ongoing development and the features the community asks for, you can buy me a coffee:
 
 ☕️ **[ko-fi.com/nebulabrowser](https://ko-fi.com/nebulabrowser)**
+
+![Support Nebula Browser](/screen05.png?raw=true "Support screen with donation QR")
 
 Have an idea or a feature request? Open an issue or drop it on the Ko-fi page. Thank you for the support! 🌌
 
