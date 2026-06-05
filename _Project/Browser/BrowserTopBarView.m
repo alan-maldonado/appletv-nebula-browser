@@ -136,7 +136,7 @@ static CGFloat const kTopBarUniformFocusHeight = 72.0;
     _menuImageView = [self newIconViewNamed:@"menu-2"];
 
     _URLLabel = [[UILabel alloc] initWithFrame:CGRectZero];
-    _URLLabel.text = @"Nebula";
+    _URLLabel.text = @"Nebula Browser";
     _URLLabel.textAlignment = NSTextAlignmentCenter;
     _URLLabel.textColor = [UIColor colorWithWhite:1.0 alpha:0.72];
     _URLLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
@@ -423,6 +423,23 @@ static CGFloat const kTopBarUniformFocusHeight = 72.0;
         return;
     }
     [delegate browserTopBarView:self didTriggerAction:button.topBarAction];
+}
+
+- (BOOL)handleCursorClickAtPoint:(CGPoint)pointInView {
+    if (self.hidden || self.alpha <= 0.01) {
+        return NO;
+    }
+    for (BrowserTopBarFocusButton *button in self.focusButtons) {
+        // The focus buttons stay laid out even while hidden in cursor mode, so
+        // their frames are valid hit targets. Pad them for TV ergonomics.
+        CGRect hitFrame = [button.superview convertRect:button.frame toView:self];
+        hitFrame = CGRectInset(hitFrame, -12.0, -12.0);
+        if (CGRectContainsPoint(hitFrame, pointInView)) {
+            [self handleFocusButtonPrimaryAction:button];
+            return YES;
+        }
+    }
+    return NO;
 }
 
 - (void)didUpdateFocusInContext:(UIFocusUpdateContext *)context withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {

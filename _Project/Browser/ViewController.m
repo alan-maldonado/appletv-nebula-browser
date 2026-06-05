@@ -459,6 +459,12 @@ static UIColor *kTextColor(void) {
 
     CGPoint point = [self.view convertPoint:[self.remoteInputController cursorAimPoint] toView:self.webview];
     if (point.y < 0) {
+        // Cursor is over the top bar: click the button under it directly; if
+        // there is none, fall back to focus-driven top bar navigation.
+        CGPoint topBarPoint = [self.view convertPoint:[self.remoteInputController cursorAimPoint] toView:self.topMenuView];
+        if ([self.topMenuView handleCursorClickAtPoint:topBarPoint]) {
+            return;
+        }
         [self activateTopBarFocusMode];
         return;
     }

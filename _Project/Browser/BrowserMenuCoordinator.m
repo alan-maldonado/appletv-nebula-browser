@@ -489,8 +489,8 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
 - (void)showAdvancedMenu {
     NSString *version = NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"];
     NSString *menuTitle = [self stringHasVisibleContent:version]
-        ? [NSString stringWithFormat:@"Nebula %@", version]
-        : @"Nebula";
+        ? [NSString stringWithFormat:@"Nebula Browser %@", version]
+        : @"Nebula Browser";
     BrowserAdvancedMenuViewController *menuViewController = [[BrowserAdvancedMenuViewController alloc] initWithTitle:menuTitle
                                                                                                             sections:[self advancedMenuSections]
                                                                                                           footerText:[self advancedMenuFooterText]];

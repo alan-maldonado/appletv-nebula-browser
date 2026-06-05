@@ -38,6 +38,9 @@ typedef NS_ENUM(NSInteger, BrowserTopBarAction) {
 - (CGRect)interactiveFrameForView:(UIView *)view;
 - (void)setFocusModeActive:(BOOL)focusModeActive;
 - (nullable UIView *)preferredFocusItem;
+// Cursor-mode click: triggers the button under the given point (in this view's
+// coordinates). Returns NO if no button is there.
+- (BOOL)handleCursorClickAtPoint:(CGPoint)pointInView;
 
 @end
 
