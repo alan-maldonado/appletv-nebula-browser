@@ -1,76 +1,64 @@
-tvOS Browser
+Nebula Browser
 =============
 
-![Alt text](/screen01.png?raw=true "tvOS Browser on AppleTV")
+![Alt text](/screen01.png?raw=true "Nebula Browser on Apple TV")
 
-![Alt text](/screen02.png?raw=true "tvOS Browser Tab Switcher")
+![Alt text](/screen02.png?raw=true "Nebula Browser Tab Switcher")
 
-![Alt text](/screen03.png?raw=true "tvOS Browser Menu")
-
-
-***tvOS Browser*** is a webbrowser for Apple TV devices running tvOS. It's using private API's, Apple does normally not allow to use this in App Store distributed apps. The latest version has some significant changes:
-- It's now using WKWebView instead of UIWebView, which results in much improved performance and better website rendering.
-- Added support for browser Tabs
-- New modern Liquid Glass UI
-- Added full screen video player, enabled by default (can be disabled in the Menu)
-
-This project is an improved version developed with the help of AI ([Claude Code](https://claude.com/claude-code)): the full screen video player transport controls (fast-forward, scrubbing, transport bar), the back/double-back navigation, the arrow button shortcuts, and several input-handling fixes were built in collaboration with it.
-
-This code is provided as is with no warrenty or liability. Use at your own risk and do ***not*** distribute builds of this project on the App Store.
+![Alt text](/screen03.png?raw=true "Nebula Browser Menu")
 
 
-How to Install tvOS Browser
+***Nebula Browser*** is a web browser for Apple TV devices running tvOS. It uses private API's that Apple normally does not allow in App Store distributed apps. Highlights:
+- Uses WKWebView for fast, modern website rendering.
+- Browser tabs with a focus-driven overview.
+- Modern Liquid Glass UI with selectable accent themes (the app icon follows the theme).
+- A built-in full screen video player with fast-forward, scrubbing and a transport bar.
+- Multiple search engines, page zoom, and privacy options.
+
+Nebula Browser was developed with the help of AI ([Claude Code](https://claude.com/claude-code)): the full screen video player transport controls (fast-forward, scrubbing, transport bar, resume), the back/double-back navigation, the arrow button shortcuts, the per-page video fullscreen, the privacy options, and many input-handling fixes were built in collaboration with it. It is based on the open-source *tvOS Browser* by Steven Troughton-Smith and Jip van Akker.
+
+This code is provided as is with no warranty or liability. Use at your own risk and do ***not*** distribute builds of this project on the App Store.
+
+
+How to Install Nebula Browser
 =============
 
 There is ***no*** ready to use binary available on this repository. You need to install Xcode and build/run the project yourself.
 To install this app, connect your Apple TV to your macOS computer via WiFi (or USB on older devices). Open this project in Xcode and install to your Apple TV.
 Connecting to your Apple TV wirelessly: http://www.redmondpie.com/how-to-wirelessly-connect-apple-tv-4k-to-xcode-on-mac/.
 
-How to Use tvOSBrowser
+How to Use Nebula Browser
 =============
 
 Quick start:
-- Double press on the center of the touch area of the Apple TV Remote to switch between cursor & scroll mode.
-- Press the touch area while in cursor mode to click.
-- Single tap the Menu button to go back. To exit the app, tap Menu (Back) twice within 2 seconds when there is no more history ("Press Back again to exit").
-- Single tap the Play/Pause button to show the Quick Menu, with: input URLs, search Google, reload the page, go forward, or jump to the root page of the current site ("Go to <domain>").
-- Double tap the Play/Pause button to: display the full Side Menu, with: Favorites, History, set/open homepage, change user agent, clear cache, and clear cookies and more.
+- Double press the center of the touch area to switch between cursor & scroll mode. In scroll mode, press Back or Select to return to cursor mode.
+- Press the touch area while in cursor mode to click. Double-tap a video to send it full screen.
+- Single tap the Menu button to go back. Tap it twice within 2 seconds at the start of history to exit the app.
+- Single tap Play/Pause for the Quick Menu: enter a URL or search, reload, go forward, jump to a site's root ("Go to <domain>"), or open Settings.
+- Double tap Play/Pause to open the full Settings menu. Adjustable settings (marked ‹ ›) change with the Left/Right keys, with an explanation shown beside the menu.
 
-Arrow buttons (clickpad edges) while browsing:
-- Single press Up/Down: scroll the page vertically (Up at the top of the page moves focus to the top Navigation bar).
-- Single press Left/Right: scroll the page horizontally.
-- Double press Up: open the Tabs overview.
-- Double press Down: open Favorites.
-- Double press Left: open History.
-- Double press Right: open a New Tab.
+Arrow buttons while browsing:
+- Single press Up/Down: scroll the page (Up at the very top focuses the toolbar).
+- Single press Left/Right: scroll horizontally.
+- Double press: Up = Tabs, Down = Favorites, Left = History, Right = New Tab. (Can be turned off in Settings.)
 
 Tabs overview:
 - Swipe left/right to move between tab cards, press the touch area to switch tabs.
-- Swipe up (or tap Play/Pause) to close the focused tab.
+- Swipe up (or tap Play/Pause) to close the focused tab, with an app-switcher style animation.
 - Tap Menu to close the overview.
 
-Full screen video player (enabled by default; can be disabled in the Menu):
-- Press Right repeatedly to fast-forward at 2x, 4x, 8x, 16x and up to 32x; press Left to step the speed back down.
-- Press Play/Pause (or the touch area) while fast-forwarding to resume normal playback from that exact point.
-- Press Left/Right while paused to skip ±10 seconds.
-- Swipe on the touch area to scrub the timeline; while paused, consecutive quick swipes accelerate the scrubbing (up to 6x).
-- A transport bar shows the current position, progress, and remaining time (or total duration, configurable in the Side Menu). It stays visible while paused and auto-hides during playback.
-- Tap Menu to close the player.
+Video:
+- Videos play inline on the page. Double-tap a video, or use the page's own full screen control, to open it.
+- When a direct media URL is available it opens in the built-in full screen player; otherwise it expands within the page.
+- Full screen player: press Right to fast-forward at 2x → 32x, Left to slow down, Play/Pause to resume from that point. Left/Right while paused skip ±10s. Swipe to scrub (quick swipes accelerate). Back cancels a fast-forward/scrub and returns to where you were. Videos resume where you left off.
+- A "Full Screen Player" option in Settings can make videos always open in the built-in player instead of inline.
 
-The Side menu lets you:
-- Go to Home page
-- Set Home page
-- Manage Favorites
-- Manage History
-- Show Tabs
-- Open New Tab
-- Hide/Show top Navigation bar
-- Set page Scaling options
-- Increase/decrease Font size
-- Enable/disable Full Screen player
-- Choose the video player time display (remaining time or total duration)
-- Switch Desktop/Mobile User Agent
-- Show some video diagnostics
-- Clear cache
-- Cleare cookies
-- Show the usage guide
+Settings (Side menu) include:
+- Navigation: home page, favorites, history, tabs, new tab, arrow shortcuts on/off.
+- Appearance: accent theme, top navigation bar, page scaling, font size.
+- Video Playback: full screen player, player time display (remaining / total).
+- Search: search engine (Google, Bing, DuckDuckGo, Yahoo, Ecosia, Brave, Startpage).
+- Privacy: what to open on launch (last session / home page), clear history on exit, privacy mode (hide content in the app switcher).
+- Compatibility: desktop / mobile user agent.
+- Maintenance: clear cache, clear cookies.
+- Help: usage guide, show guide on launch.
