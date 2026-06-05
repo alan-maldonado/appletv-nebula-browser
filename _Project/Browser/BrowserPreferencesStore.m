@@ -9,6 +9,7 @@ static NSString * const kVideoHUDShowsTotalDurationDefaultsKey = @"VideoHUDShows
 static NSString * const kArrowDoubleTapShortcutsEnabledDefaultsKey = @"ArrowDoubleTapShortcutsEnabled";
 static NSString * const kThemeIndexDefaultsKey = @"ThemeIndex";
 static NSString * const kSettingsHintShownCountDefaultsKey = @"SettingsHintShownCount";
+static NSString * const kSearchEngineIndexDefaultsKey = @"SearchEngineIndex";
 static NSString * const kScalePagesToFitDefaultsKey = @"ScalePagesToFit";
 static NSString * const kDontShowHintsOnLaunchDefaultsKey = @"DontShowHintsOnLaunch";
 static NSString * const kHomepageDefaultsKey = @"homepage";
@@ -56,6 +57,27 @@ static UIColor *BrowserThemeColorAtIndex(NSUInteger index) {
 
 + (NSArray<NSString *> *)themeNames {
     return BrowserThemeNames();
+}
+
+// Search engines: name + query URL format (single %@ for the encoded terms).
+static NSArray<NSDictionary<NSString *, NSString *> *> *BrowserSearchEngines(void) {
+    return @[
+        @{ @"name": @"Google",     @"format": @"https://www.google.com/search?q=%@" },
+        @{ @"name": @"Bing",       @"format": @"https://www.bing.com/search?q=%@" },
+        @{ @"name": @"DuckDuckGo", @"format": @"https://duckduckgo.com/?q=%@" },
+        @{ @"name": @"Yahoo",      @"format": @"https://search.yahoo.com/search?p=%@" },
+        @{ @"name": @"Ecosia",     @"format": @"https://www.ecosia.org/search?q=%@" },
+        @{ @"name": @"Brave",      @"format": @"https://search.brave.com/search?q=%@" },
+        @{ @"name": @"Startpage",  @"format": @"https://www.startpage.com/sp/search?query=%@" },
+    ];
+}
+
++ (NSArray<NSString *> *)searchEngineNames {
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    for (NSDictionary<NSString *, NSString *> *engine in BrowserSearchEngines()) {
+        [names addObject:engine[@"name"]];
+    }
+    return names;
 }
 
 - (NSUserDefaults *)defaults {
@@ -166,6 +188,28 @@ static UIColor *BrowserThemeColorAtIndex(NSUInteger index) {
 
 - (UIColor *)themeAccentColor {
     return BrowserThemeColorAtIndex(self.themeIndex);
+}
+
+- (NSUInteger)searchEngineIndex {
+    NSInteger storedIndex = [[self defaults] integerForKey:kSearchEngineIndexDefaultsKey];
+    NSUInteger engineCount = BrowserSearchEngines().count;
+    if (storedIndex < 0 || (NSUInteger)storedIndex >= engineCount) {
+        return 0;
+    }
+    return (NSUInteger)storedIndex;
+}
+
+- (void)setSearchEngineIndex:(NSUInteger)searchEngineIndex {
+    [[self defaults] setInteger:(NSInteger)(searchEngineIndex % BrowserSearchEngines().count) forKey:kSearchEngineIndexDefaultsKey];
+    [[self defaults] synchronize];
+}
+
+- (NSString *)searchEngineName {
+    return BrowserSearchEngines()[self.searchEngineIndex][@"name"];
+}
+
+- (NSString *)searchQueryURLFormat {
+    return BrowserSearchEngines()[self.searchEngineIndex][@"format"];
 }
 
 - (BOOL)videoHUDShowsTotalDuration {

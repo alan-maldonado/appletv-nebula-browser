@@ -1106,6 +1106,23 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
     }];
 }
 
+- (BrowserAdvancedMenuItem *)searchEngineMenuItem {
+    NSString *(^titleForEngine)(void) = ^NSString * {
+        return [NSString stringWithFormat:@"Search Engine: %@", [[BrowserPreferencesStore new] searchEngineName]];
+    };
+    BrowserPreferencesStore *preferencesStore = self.preferencesStore;
+    BrowserAdvancedMenuItem *item = [self advancedMenuItemWithTitle:titleForEngine()
+                                                              style:UIAlertActionStyleDefault
+                                                            handler:nil];
+    item.adjustHandler = ^NSString *(NSInteger direction) {
+        NSUInteger engineCount = [BrowserPreferencesStore searchEngineNames].count;
+        NSInteger nextIndex = ((NSInteger)preferencesStore.searchEngineIndex + direction + (NSInteger)engineCount) % (NSInteger)engineCount;
+        preferencesStore.searchEngineIndex = (NSUInteger)nextIndex;
+        return titleForEngine();
+    };
+    return item;
+}
+
 - (BrowserAdvancedMenuItem *)usageGuideMenuItem {
     return [self advancedMenuItemWithTitle:@"Usage Guide"
                                      style:UIAlertActionStyleDefault
@@ -1329,6 +1346,10 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
                                                items:@[
             [self fullscreenVideoPlaybackToggleMenuItem],
             [self videoHUDTimeDisplayToggleMenuItem],
+        ]],
+        [BrowserAdvancedMenuSection sectionWithTitle:@"Search"
+                                               items:@[
+            [self searchEngineMenuItem],
         ]],
         [BrowserAdvancedMenuSection sectionWithTitle:@"Compatibility"
                                                items:@[

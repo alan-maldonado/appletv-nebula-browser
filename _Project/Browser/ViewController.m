@@ -495,7 +495,7 @@ static UIColor *kTextColor(void) {
         }]];
     }
 
-    [alertController addAction:[UIAlertAction actionWithTitle:@"Input URL or Search with Google"
+    [alertController addAction:[UIAlertAction actionWithTitle:@"Enter URL or Search"
                                                         style:UIAlertActionStyleDefault
                                                       handler:^(__unused UIAlertAction *action) {
         [self showInputURLorSearchGoogle];

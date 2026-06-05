@@ -108,8 +108,9 @@ static NSUInteger const kMaximumHistoryCount = 100;
     if (sanitizedQuery.length == 0) {
         return nil;
     }
-    
-    NSString *searchURLString = [NSString stringWithFormat:@"https://www.google.com/search?q=%@", sanitizedQuery];
+
+    NSString *format = self.preferencesStore.searchQueryURLFormat ?: @"https://www.google.com/search?q=%@";
+    NSString *searchURLString = [NSString stringWithFormat:format, sanitizedQuery];
     return [self requestForURLString:searchURLString];
 }
 

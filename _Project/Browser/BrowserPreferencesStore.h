@@ -8,6 +8,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSString *)desktopUserAgent;
 + (NSString *)mobileUserAgent;
 + (NSArray<NSString *> *)themeNames;
++ (NSArray<NSString *> *)searchEngineNames;
 
 @property (nonatomic, copy) NSString *userAgent;
 @property (nonatomic) BOOL mobileModeEnabled;
@@ -27,6 +28,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) NSUInteger themeIndex;
 @property (nonatomic, readonly) NSString *themeName;
 @property (nonatomic, readonly) UIColor *themeAccentColor;
+// Search engine: index into +searchEngineNames (0 = Google). The query format
+// has a single %@ placeholder for the URL-encoded terms.
+@property (nonatomic) NSUInteger searchEngineIndex;
+@property (nonatomic, readonly) NSString *searchEngineName;
+@property (nonatomic, readonly) NSString *searchQueryURLFormat;
 @property (nonatomic) BOOL scalePagesToFit;
 @property (nonatomic) BOOL dontShowHintsOnLaunch;
 @property (nonatomic, copy) NSString *homePageURLString;
