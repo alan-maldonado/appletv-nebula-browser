@@ -47,7 +47,17 @@ static UIColor *kTextColor(void) {
     self.view.backgroundColor = UIColor.clearColor;
 
     UITextField *textField = [[UITextField alloc] initWithFrame:CGRectZero];
+    // URL-optimized keyboard: dedicated "." and "/" keys, no autocorrect/caps.
     textField.keyboardType = UIKeyboardTypeURL;
+    textField.textContentType = UITextContentTypeURL;
+    textField.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    textField.autocorrectionType = UITextAutocorrectionTypeNo;
+    textField.spellCheckingType = UITextSpellCheckingTypeNo;
+    if (@available(tvOS 11.0, *)) {
+        textField.smartQuotesType = UITextSmartQuotesTypeNo;
+        textField.smartDashesType = UITextSmartDashesTypeNo;
+        textField.smartInsertDeleteType = UITextSmartInsertDeleteTypeNo;
+    }
     textField.placeholder = @"Enter URL or Search Terms";
     textField.returnKeyType = UIReturnKeyGo;
     textField.text = self.initialText;
