@@ -466,7 +466,7 @@ static UIColor *kTextColor(void) {
                           "})()",
                           (unsigned long)self.viewModel.textFontSize,
                           (unsigned long)self.viewModel.textFontSize];
-    [self.webview stringByEvaluatingJavaScriptFromString:jsString];
+    [self.webview evaluateJavaScriptStringAsync:jsString];
 }
 
 - (void)showInputURLorSearchGoogle {

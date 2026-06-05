@@ -50,7 +50,7 @@ static BOOL const kBrowserYouTubeNativeExtractionEnabled = NO;
     if (![self isNativePlayableVideoURLString:src]) {
         // Blob/MSE source AVPlayer can't open: stay in the page, expanded via CSS.
         NSLog(@"[NativeVideoPlayer] page fullscreen request without playable URL (src=%@), using CSS fallback", src ?: @"");
-        [self.host.browserWebView stringByEvaluatingJavaScriptFromString:@"window.__browserApplyCssFullscreen && window.__browserApplyCssFullscreen();"];
+        [self.host.browserWebView evaluateJavaScriptStringAsync:@"window.__browserApplyCssFullscreen && window.__browserApplyCssFullscreen();"];
         return;
     }
 

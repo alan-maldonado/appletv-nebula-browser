@@ -90,10 +90,20 @@ static void BrowserEnsureWebKitRuntimeLoaded(void) {
     });
 }
 
-static void BrowserPumpRunLoopUntil(BOOL *done) {
+// Runs the run loop until *done (set from a completion handler that also calls
+// CFRunLoopStop on this loop) or until the timeout elapses. Event-driven rather
+// than 10ms-polling, so a synchronous JS eval returns the instant its handler
+// fires instead of waiting out a poll tick. The timeout guarantees it can never
+// hang the main thread if the handler never arrives.
+static void BrowserPumpRunLoopUntil(BOOL *done, CFRunLoopRef runLoop) {
+    CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 2.0;
     while (!*done) {
+        CFAbsoluteTime remaining = deadline - CFAbsoluteTimeGetCurrent();
+        if (remaining <= 0.0) {
+            break;
+        }
         @autoreleasepool {
-            [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, remaining, true);
         }
     }
 }
@@ -927,6 +937,7 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
         return nil;
     }
 
+    CFRunLoopRef runLoop = CFRunLoopGetCurrent();
     __block id evaluationResult = nil;
     __block NSError *evaluationError = nil;
     __block BOOL finished = NO;
@@ -934,13 +945,27 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
         evaluationResult = result;
         evaluationError = error;
         finished = YES;
+        CFRunLoopStop(runLoop); // wake the pump immediately
     });
-    BrowserPumpRunLoopUntil(&finished);
+    BrowserPumpRunLoopUntil(&finished, runLoop);
 
     if (evaluationError != nil) {
         return nil;
     }
     return BrowserStringFromJavaScriptResult(evaluationResult);
+}
+
+// Fire-and-forget: evaluate JS without blocking the caller. Use when the result
+// is not needed (applying styles, dispatching synthetic events, installing hooks).
+- (void)evaluateJavaScriptStringAsync:(NSString *)script {
+    if (script.length == 0 || self.runtimeWebView == nil) {
+        return;
+    }
+    SEL selector = NSSelectorFromString(@"evaluateJavaScript:completionHandler:");
+    if (![self.runtimeWebView respondsToSelector:selector]) {
+        return;
+    }
+    ((void (*)(id, SEL, id, id))objc_msgSend)(self.runtimeWebView, selector, script, (id)nil);
 }
 
 - (void)pauseAllMediaPlayback {
@@ -992,7 +1017,7 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
                 "});"
             "}"
         "})();";
-    [self stringByEvaluatingJavaScriptFromString:pauseScript];
+    [self evaluateJavaScriptStringAsync:pauseScript];
 }
 
 - (NSString *)runtimeMediaPreferenceReport {
@@ -1104,8 +1129,8 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
 }
 
 - (void)installYouTubeRequestCaptureHook {
-    [self stringByEvaluatingJavaScriptFromString:BrowserYouTubeRequestCaptureScript()];
-    [self stringByEvaluatingJavaScriptFromString:BrowserFakeFullscreenScript()];
+    [self evaluateJavaScriptStringAsync:BrowserYouTubeRequestCaptureScript()];
+    [self evaluateJavaScriptStringAsync:BrowserFakeFullscreenScript()];
 }
 
 - (void)setUserAgent:(NSString *)userAgent {
@@ -1149,7 +1174,7 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
     NSString *script = zoomValue == 1.0
         ? @"document.documentElement.style.zoom=''; document.body.style.zoom='';"
         : [NSString stringWithFormat:@"document.documentElement.style.zoom='%0.4f'; document.body.style.zoom='%0.4f';", zoomValue, zoomValue];
-    [self stringByEvaluatingJavaScriptFromString:script];
+    [self evaluateJavaScriptStringAsync:script];
 }
 
 - (void)webView:(id)webView didStartProvisionalNavigation:(id)navigation {
@@ -1276,7 +1301,7 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
         [self.delegate webView:self didRequestFullscreenWithVideoInfo:body];
     } else {
         // No one to handle it: expand in the page so the button still works.
-        [self stringByEvaluatingJavaScriptFromString:@"window.__browserApplyCssFullscreen && window.__browserApplyCssFullscreen();"];
+        [self evaluateJavaScriptStringAsync:@"window.__browserApplyCssFullscreen && window.__browserApplyCssFullscreen();"];
     }
 }
 
@@ -1438,13 +1463,15 @@ windowFeatures:(id)windowFeatures {
         return NSHTTPCookieStorage.sharedHTTPCookieStorage.cookies ?: @[];
     }
 
+    CFRunLoopRef runLoop = CFRunLoopGetCurrent();
     __block NSArray<NSHTTPCookie *> *cookies = nil;
     __block BOOL finished = NO;
     ((void (*)(id, SEL, id))objc_msgSend)(cookieStore, selector, ^(NSArray<NSHTTPCookie *> *fetchedCookies) {
         cookies = fetchedCookies;
         finished = YES;
+        CFRunLoopStop(runLoop);
     });
-    BrowserPumpRunLoopUntil(&finished);
+    BrowserPumpRunLoopUntil(&finished, runLoop);
     return cookies ?: @[];
 }
 
@@ -1476,15 +1503,19 @@ windowFeatures:(id)windowFeatures {
         return;
     }
 
+    CFRunLoopRef runLoop = CFRunLoopGetCurrent();
     __block NSInteger remainingCount = cookies.count;
     __block BOOL finished = cookies.count == 0;
     for (NSHTTPCookie *cookie in cookies) {
         ((void (*)(id, SEL, id, id))objc_msgSend)(cookieStore, selector, cookie, ^{
             remainingCount -= 1;
             finished = remainingCount == 0;
+            if (finished) {
+                CFRunLoopStop(runLoop);
+            }
         });
     }
-    BrowserPumpRunLoopUntil(&finished);
+    BrowserPumpRunLoopUntil(&finished, runLoop);
 }
 
 + (NSSet<NSString *> *)allWebsiteDataTypes {

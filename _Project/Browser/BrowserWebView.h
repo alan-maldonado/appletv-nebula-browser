@@ -36,6 +36,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)goBack;
 - (void)goForward;
 - (nullable NSString *)stringByEvaluatingJavaScriptFromString:(NSString * _Nonnull)script;
+// Fire-and-forget variant: does not block the main thread; use when the result is unused.
+- (void)evaluateJavaScriptStringAsync:(NSString * _Nonnull)script;
 - (NSString * _Nonnull)runtimeMediaPreferenceReport;
 - (void)setUserAgent:(NSString * _Nullable)userAgent;
 - (void)pauseAllMediaPlayback;

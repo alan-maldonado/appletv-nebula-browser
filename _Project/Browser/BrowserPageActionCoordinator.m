@@ -192,7 +192,7 @@
                                                                                                 "if (tagName === 'textarea' || target.isContentEditable) { return 'text'; }"
                                                                                                 "if (tagName === 'input' && !type) { return 'text'; }"
                                                                                                 "return type;"];
-    [self.domInteractionService evaluateResolvedElementJavaScriptAtPoint:point
+    [self.domInteractionService dispatchResolvedElementJavaScriptAtPoint:point
                                                                  webView:webView
                                                                     body:@"var target = editableElement || resolvedElement || interactiveElement;"
                                                                          "if (!target) { return 'false'; }"

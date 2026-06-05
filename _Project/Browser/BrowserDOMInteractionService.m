@@ -30,16 +30,10 @@ static NSString * const kEditableElementSelector = @"input, textarea, select, [c
     return point;
 }
 
-- (NSString *)evaluateResolvedElementJavaScriptAtPoint:(CGPoint)point
-                                                webView:(BrowserWebView *)webView
-                                                   body:(NSString *)body {
-    if (webView == nil) {
-        return @"";
-    }
-
+- (NSString *)resolvedElementScriptForPoint:(CGPoint)point body:(NSString *)body {
     NSInteger pointX = (NSInteger)llround(point.x);
     NSInteger pointY = (NSInteger)llround(point.y);
-    NSString *script = [NSString stringWithFormat:
+    return [NSString stringWithFormat:
                         @"(function(){"
                         "var x=%ld;"
                         "var y=%ld;"
@@ -89,7 +83,27 @@ static NSString * const kEditableElementSelector = @"input, textarea, select, [c
                         kInteractiveElementSelector,
                         kEditableElementSelector,
                         body];
+}
+
+- (NSString *)evaluateResolvedElementJavaScriptAtPoint:(CGPoint)point
+                                                webView:(BrowserWebView *)webView
+                                                   body:(NSString *)body {
+    if (webView == nil) {
+        return @"";
+    }
+    NSString *script = [self resolvedElementScriptForPoint:point body:body];
     return [webView stringByEvaluatingJavaScriptFromString:script] ?: @"";
+}
+
+// Fire-and-forget: runs the resolved-element script without blocking. For pure
+// side effects (e.g. dispatching synthetic click events) where the result is unused.
+- (void)dispatchResolvedElementJavaScriptAtPoint:(CGPoint)point
+                                          webView:(BrowserWebView *)webView
+                                             body:(NSString *)body {
+    if (webView == nil) {
+        return;
+    }
+    [webView evaluateJavaScriptStringAsync:[self resolvedElementScriptForPoint:point body:body]];
 }
 
 - (NSString *)evaluateEditableElementJavaScriptAtPoint:(CGPoint)point

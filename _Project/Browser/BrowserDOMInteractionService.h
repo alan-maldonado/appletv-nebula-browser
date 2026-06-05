@@ -13,6 +13,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSString *)evaluateResolvedElementJavaScriptAtPoint:(CGPoint)point
                                                 webView:(BrowserWebView *)webView
                                                    body:(NSString *)body;
+// Fire-and-forget variant (non-blocking) for side-effect-only scripts.
+- (void)dispatchResolvedElementJavaScriptAtPoint:(CGPoint)point
+                                          webView:(BrowserWebView *)webView
+                                             body:(NSString *)body;
 - (NSString *)evaluateEditableElementJavaScriptAtPoint:(CGPoint)point
                                                 webView:(BrowserWebView *)webView
                                                    body:(NSString *)body;
