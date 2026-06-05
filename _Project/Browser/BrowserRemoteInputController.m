@@ -430,6 +430,8 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
         if (isDoublePress) {
             self.lastArrowPressType = (UIPressType)-1;
             self.lastArrowPressTimestamp = 0;
+            // Cancel a pending single-Up top-bar focus so double-Up opens Tabs.
+            [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(activateTopBarFocusDeferred) object:nil];
             switch (press.type) {
                 case UIPressTypeUpArrow:
                     [self.host browserRemoteInputControllerShowTabOverview];
@@ -458,8 +460,16 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
             case UIPressTypeUpArrow: {
                 BOOL atTop = scrollView == nil || scrollView.contentOffset.y <= 0.0;
                 if (atTop && [self.host browserRemoteInputControllerCanActivateTopBarFocus]) {
-                    // Already at the top: move focus up into the top bar (previous behavior).
-                    [self.host browserRemoteInputControllerActivateTopBarFocus];
+                    if (shortcutsEnabled) {
+                        // Defer focusing the top bar so a quick second Up can be
+                        // detected as the double-press shortcut (Tabs) instead of
+                        // the first Up stealing focus into the toolbar.
+                        [self performSelector:@selector(activateTopBarFocusDeferred)
+                                   withObject:nil
+                                   afterDelay:0.45];
+                    } else {
+                        [self.host browserRemoteInputControllerActivateTopBarFocus];
+                    }
                 } else {
                     [self applyManualScrollDelta:CGPointMake(0.0, -verticalStep) animated:YES];
                 }
@@ -489,6 +499,10 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
         return YES;
     }
     return NO;
+}
+
+- (void)activateTopBarFocusDeferred {
+    [self.host browserRemoteInputControllerActivateTopBarFocus];
 }
 
 - (BOOL)handleTouchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
