@@ -853,6 +853,42 @@ static UIColor *kTextColor(void) {
     [self browserHandlePrimaryAction];
 }
 
+- (BOOL)browserRemoteInputControllerFullscreenVideoAtCursor {
+    if (!self.remoteInputController.cursorModeEnabled || self.webview == nil) {
+        return NO;
+    }
+    CGPoint domPoint = [self browserDOMPointForCursor];
+    if (domPoint.y < 0) {
+        return NO; // cursor is over the top bar, not the page
+    }
+    // Find a <video> at the cursor (the element, a descendant, or a player
+    // ancestor's video) and fullscreen it via the page API — which our
+    // fake-fullscreen hook routes to the native player (or CSS fallback).
+    NSString *script = [NSString stringWithFormat:
+        @"(function(){"
+        "var x=%ld,y=%ld;"
+        "var el=document.elementFromPoint(x,y);"
+        "function covers(c){if(!c){return false;}var r=c.getBoundingClientRect();"
+            "return x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom&&r.width>0&&r.height>0;}"
+        "var v=null,a=el;"
+        "while(a){"
+            // Only accept a video whose box actually contains the tap point, so
+            // double-tapping elsewhere on the page doesn't grab a far-off video.
+            "if(a.tagName==='VIDEO'&&covers(a)){v=a;break;}"
+            "if(a.querySelector){var q=a.querySelector('video');if(covers(q)){v=q;break;}}"
+            "a=a.parentElement;"
+        "}"
+        "if(!v){return 'false';}"
+        "if(v.webkitEnterFullscreen){v.webkitEnterFullscreen();}"
+        "else if(v.requestFullscreen){v.requestFullscreen();}"
+        "else if(v.webkitRequestFullscreen){v.webkitRequestFullscreen();}"
+        "return 'true';"
+        "})()",
+        (long)llround(domPoint.x), (long)llround(domPoint.y)];
+    NSString *result = [self.webview stringByEvaluatingJavaScriptFromString:script];
+    return [result isEqualToString:@"true"];
+}
+
 - (void)browserRemoteInputControllerShowTabOverview {
     [self browserShowTabOverview];
 }
@@ -948,6 +984,11 @@ static UIColor *kTextColor(void) {
     }
     if ([self browserRemoteInputControllerTabOverviewVisible]) {
         [self browserRemoteInputControllerDismissTabOverview];
+        return;
+    }
+    // In scroll mode, Back returns to cursor mode instead of navigating.
+    if (!self.remoteInputController.cursorModeEnabled) {
+        [self.remoteInputController setCursorModeEnabled:YES];
         return;
     }
     [self browserRemoteInputControllerHandleMenuPress];

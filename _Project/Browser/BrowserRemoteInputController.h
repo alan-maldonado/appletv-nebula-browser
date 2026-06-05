@@ -17,6 +17,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)browserRemoteInputControllerDismissTabOverview;
 - (void)browserRemoteInputControllerHandleTabOverviewAlternateAction;
 - (void)browserRemoteInputControllerHandlePrimaryAction;
+// Double-tap on a video: fullscreen it. Returns YES if a video was found at the
+// cursor (so the caller skips the cursor/scroll mode toggle).
+- (BOOL)browserRemoteInputControllerFullscreenVideoAtCursor;
 - (void)browserRemoteInputControllerShowTabOverview;
 - (void)browserRemoteInputControllerShowHistory;
 - (void)browserRemoteInputControllerShowFavorites;

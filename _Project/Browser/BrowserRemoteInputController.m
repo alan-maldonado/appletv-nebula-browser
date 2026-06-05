@@ -247,7 +247,10 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
         self.cursorFrozenForClick = NO;
         [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(handleDeferredSelectPressAction) object:nil];
         if (![self.host browserRemoteInputControllerTabOverviewVisible]) {
-            [self setCursorModeEnabled:!self.cursorModeEnabled];
+            // Double-tap on a video fullscreens it; elsewhere it toggles cursor/scroll mode.
+            if (![self.host browserRemoteInputControllerFullscreenVideoAtCursor]) {
+                [self setCursorModeEnabled:!self.cursorModeEnabled];
+            }
         }
         return;
     }
@@ -375,6 +378,20 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
             [presentedViewController dismissViewControllerAnimated:YES completion:nil];
             return YES;
         }
+        return YES;
+    }
+
+    // In scroll mode, Select returns to cursor mode instead of clicking. (Menu is
+    // handled globally before reaching here.) A modal or the tab overview, which
+    // also disable cursor mode, are handled above so they're excluded here.
+    if (press.type == UIPressTypeSelect &&
+        presentedViewController == nil &&
+        !self.cursorModeEnabled &&
+        ![self.host browserRemoteInputControllerTabOverviewVisible]) {
+        // Stamp the timestamp so the global select notification's dedup window
+        // suppresses the duplicate handling (which would otherwise click a link).
+        self.lastDirectSelectPressTimestamp = CACurrentMediaTime();
+        [self setCursorModeEnabled:YES];
         return YES;
     }
 

@@ -139,9 +139,9 @@ static NSArray<NSDictionary<NSString *, NSString *> *> *BrowserSearchEngines(voi
 }
 
 - (BOOL)fullscreenVideoPlaybackEnabled {
-    // Defaults to YES: videos open in the full screen player out of the box.
-    id storedValue = [[self defaults] objectForKey:kEnableFullscreenVideoPlaybackDefaultsKey];
-    return storedValue == nil ? YES : [storedValue boolValue];
+    // Defaults to NO: videos play inline by now (double-tap or the page's own
+    // controls send them to fullscreen when wanted).
+    return [[self defaults] boolForKey:kEnableFullscreenVideoPlaybackDefaultsKey];
 }
 
 - (void)setFullscreenVideoPlaybackEnabled:(BOOL)fullscreenVideoPlaybackEnabled {
