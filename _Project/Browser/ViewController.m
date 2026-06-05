@@ -30,6 +30,62 @@ static UIColor *kTextColor(void) {
     }
 }
 
+#pragma mark - URL / search input (keyboard only, no visible modal)
+
+@interface BrowserURLInputViewController : UIViewController
+@property (nonatomic, copy) NSString *initialText;
+@property (nonatomic, copy) void (^submitHandler)(NSString *text);
+@property (nonatomic) UITextField *textField;
+@property (nonatomic) BOOL didCommit;
+@end
+
+@implementation BrowserURLInputViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    // Transparent: the system keyboard is the only thing the user sees.
+    self.view.backgroundColor = UIColor.clearColor;
+
+    UITextField *textField = [[UITextField alloc] initWithFrame:CGRectZero];
+    textField.keyboardType = UIKeyboardTypeURL;
+    textField.placeholder = @"Enter URL or Search Terms";
+    textField.returnKeyType = UIReturnKeyGo;
+    textField.text = self.initialText;
+    textField.hidden = YES; // The tvOS keyboard shows its own text preview.
+    [textField addTarget:self action:@selector(handleSubmit:) forControlEvents:UIControlEventEditingDidEndOnExit];
+    [textField addTarget:self action:@selector(handleEditingEnded:) forControlEvents:UIControlEventEditingDidEnd];
+    [self.view addSubview:textField];
+    self.textField = textField;
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    [self.textField becomeFirstResponder];
+}
+
+- (void)handleSubmit:(UITextField *)textField {
+    self.didCommit = YES;
+    NSString *text = textField.text;
+    void (^handler)(NSString *) = self.submitHandler;
+    [self dismissViewControllerAnimated:NO completion:^{
+        if (handler != nil) {
+            handler(text);
+        }
+    }];
+}
+
+- (void)handleEditingEnded:(UITextField *)textField {
+    // Fires for both commit (Go) and cancel (Menu dismisses the keyboard). On a
+    // plain cancel, tear down this invisible controller so one Back exits.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!self.didCommit && self.presentingViewController != nil) {
+            [self dismissViewControllerAnimated:NO completion:nil];
+        }
+    });
+}
+
+@end
+
 #pragma mark - Usage Guide (scrollable)
 
 @interface BrowserUsageGuideViewController : UIViewController
@@ -404,51 +460,16 @@ static UIColor *kTextColor(void) {
 }
 
 - (void)showInputURLorSearchGoogle {
-    UIAlertController *alertController = [UIAlertController alertControllerWithTitle:@"Enter URL or Search Terms"
-                                                                             message:@""
-                                                                      preferredStyle:UIAlertControllerStyleAlert];
-
-    [alertController addTextFieldWithConfigurationHandler:^(UITextField *textField) {
-        textField.keyboardType = UIKeyboardTypeURL;
-        textField.placeholder = @"Enter URL or Search Terms";
-        textField.textColor = kTextColor();
-        [textField setReturnKeyType:UIReturnKeyDone];
-    }];
-
+    BrowserURLInputViewController *inputViewController = [[BrowserURLInputViewController alloc] init];
+    inputViewController.modalPresentationStyle = UIModalPresentationOverFullScreen;
     __weak typeof(self) weakSelf = self;
-    [alertController addAction:[UIAlertAction actionWithTitle:@"Search Google"
-                                                        style:UIAlertActionStyleDefault
-                                                      handler:^(__unused UIAlertAction *action) {
-        UITextField *textField = alertController.textFields.firstObject;
-        NSURLRequest *searchRequest = [weakSelf.navigationService googleSearchRequestForQuery:textField.text];
-        if (searchRequest != nil) {
-            [weakSelf.webview loadRequest:searchRequest];
-        } else {
-            [weakSelf requestURLorSearchInput];
+    inputViewController.submitHandler = ^(NSString *text) {
+        NSURLRequest *request = [weakSelf.navigationService requestForURLOrSearchString:text];
+        if (request != nil) {
+            [weakSelf.webview loadRequest:request];
         }
-    }]];
-    [alertController addAction:[UIAlertAction actionWithTitle:@"Go To Website"
-                                                        style:UIAlertActionStyleDefault
-                                                      handler:^(__unused UIAlertAction *action) {
-        UITextField *textField = alertController.textFields.firstObject;
-        if (textField.text.length == 0) {
-            [weakSelf requestURLorSearchInput];
-            return;
-        }
-        NSURLRequest *navigationRequest = [weakSelf.navigationService requestForEnteredAddressString:textField.text];
-        if (navigationRequest != nil) {
-            [weakSelf.webview loadRequest:navigationRequest];
-        } else {
-            [weakSelf requestURLorSearchInput];
-        }
-    }]];
-    [alertController addAction:[UIAlertAction actionWithTitle:nil style:UIAlertActionStyleCancel handler:nil]];
-    [self presentViewController:alertController animated:YES completion:nil];
-
-    UITextField *textField = alertController.textFields.firstObject;
-    if (self.webview.request == nil || self.webview.request.URL.absoluteString.length > 0) {
-        [textField becomeFirstResponder];
-    }
+    };
+    [self presentViewController:inputViewController animated:NO completion:nil];
 }
 
 - (void)requestURLorSearchInput {

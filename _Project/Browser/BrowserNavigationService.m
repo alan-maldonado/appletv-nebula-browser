@@ -47,6 +47,62 @@ static NSUInteger const kMaximumHistoryCount = 100;
     return [self requestForURLString:trimmedAddress];
 }
 
+- (BOOL)inputLooksLikeURL:(NSString *)input {
+    NSString *trimmed = [self trimmedString:input];
+    if (trimmed.length == 0) {
+        return NO;
+    }
+    // Explicit scheme is unambiguous.
+    if ([trimmed hasPrefix:@"http://"] || [trimmed hasPrefix:@"https://"]) {
+        return YES;
+    }
+    // Any whitespace means it's almost certainly a search query.
+    if ([trimmed rangeOfCharacterFromSet:[NSCharacterSet whitespaceCharacterSet]].location != NSNotFound) {
+        return NO;
+    }
+    // localhost / host:port.
+    NSString *host = [[trimmed componentsSeparatedByString:@"/"] firstObject];
+    if ([host.lowercaseString hasPrefix:@"localhost"]) {
+        return YES;
+    }
+    // Must contain a dot to be a bare domain (a path-only token isn't a URL).
+    NSString *hostWithoutPort = [[host componentsSeparatedByString:@":"] firstObject];
+    NSArray<NSString *> *labels = [hostWithoutPort componentsSeparatedByString:@"."];
+    if (labels.count < 2) {
+        return NO;
+    }
+    NSString *tld = labels.lastObject;
+    if (tld.length < 2) {
+        return NO;
+    }
+    // All-numeric labels → looks like an IPv4 address (a.b.c.d).
+    NSCharacterSet *digits = [NSCharacterSet decimalDigitCharacterSet];
+    BOOL allNumeric = YES;
+    for (NSString *label in labels) {
+        if (label.length == 0 || [label rangeOfCharacterFromSet:digits.invertedSet].location != NSNotFound) {
+            allNumeric = NO;
+            break;
+        }
+    }
+    if (allNumeric) {
+        return labels.count == 4;
+    }
+    // Otherwise treat as a domain only if the TLD is alphabetic (e.g. .com, .io).
+    NSCharacterSet *letters = [NSCharacterSet letterCharacterSet];
+    return [tld rangeOfCharacterFromSet:letters.invertedSet].location == NSNotFound;
+}
+
+- (NSURLRequest *)requestForURLOrSearchString:(NSString *)input {
+    NSString *trimmed = [self trimmedString:input];
+    if (trimmed.length == 0) {
+        return nil;
+    }
+    if ([self inputLooksLikeURL:trimmed]) {
+        return [self requestForEnteredAddressString:trimmed];
+    }
+    return [self googleSearchRequestForQuery:trimmed];
+}
+
 - (NSURLRequest *)googleSearchRequestForQuery:(NSString *)query {
     NSString *sanitizedQuery = [self sanitizedSearchQuery:query];
     if (sanitizedQuery.length == 0) {
