@@ -1,0 +1,80 @@
+Nebula Browser
+=============
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/T1G020UH4L)
+
+![Browsing on Apple TV](/screen01.png?raw=true "Nebula Browser on Apple TV")
+
+![Tab overview](/screen02.png?raw=true "Nebula Browser tab overview")
+
+![Settings menu](/screen03.png?raw=true "Nebula Browser settings menu")
+
+![Full screen video player](/screen04.png?raw=true "Nebula Browser video player")
+
+
+***Nebula Browser*** is a web browser for Apple TV devices running tvOS. It uses private API's that Apple normally does not allow in App Store distributed apps. Highlights:
+- Uses WKWebView for fast, modern website rendering.
+- Browser tabs with a focus-driven overview.
+- Modern Liquid Glass UI with selectable accent themes (the app icon follows the theme).
+- A built-in full screen video player with fast-forward, scrubbing and a transport bar.
+- Multiple search engines, page zoom, and privacy options.
+
+Nebula Browser was developed with the help of AI ([Claude Code](https://claude.com/claude-code)): the full screen video player transport controls (fast-forward, scrubbing, transport bar, resume), the back/double-back navigation, the arrow button shortcuts, the per-page video fullscreen, the privacy options, and many input-handling fixes were built in collaboration with it. It is based on the open-source *tvOS Browser* by Steven Troughton-Smith and Jip van Akker.
+
+This code is provided as is with no warranty or liability. Use at your own risk and do ***not*** distribute builds of this project on the App Store.
+
+
+Support
+=============
+
+Nebula Browser is free and open source — you build it yourself from this repo, nothing to buy. If you enjoy it and want to support ongoing development and the features the community asks for, you can buy me a coffee:
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/T1G020UH4L)
+
+![Support Nebula Browser](/screen05.png?raw=true "Support screen with donation QR")
+
+Have an idea or a feature request? Open an issue or drop it on the Ko-fi page. Thank you for the support! 🌌
+
+
+How to Install Nebula Browser
+=============
+
+There is ***no*** ready to use binary available on this repository. You need to install Xcode and build/run the project yourself.
+To install this app, connect your Apple TV to your macOS computer via WiFi (or USB on older devices). Open this project in Xcode and install to your Apple TV.
+Connecting to your Apple TV wirelessly: http://www.redmondpie.com/how-to-wirelessly-connect-apple-tv-4k-to-xcode-on-mac/.
+
+How to Use Nebula Browser
+=============
+
+Quick start:
+- Double press the center of the touch area to switch between cursor & scroll mode. In scroll mode, press Back or Select to return to cursor mode.
+- Press the touch area while in cursor mode to click. Double-tap a video to send it full screen.
+- Single tap the Menu button to go back. Tap it twice within 2 seconds at the start of history to exit the app.
+- Single tap Play/Pause for the Quick Menu: enter a URL or search, reload, go forward, jump to a site's root ("Go to <domain>"), or open Settings.
+- Double tap Play/Pause to open the full Settings menu. Adjustable settings (marked ‹ ›) change with the Left/Right keys, with an explanation shown beside the menu.
+
+Arrow buttons while browsing:
+- Single press Up/Down: scroll the page (Up at the very top focuses the toolbar).
+- Single press Left/Right: scroll horizontally.
+- Double press: Up = Tabs, Down = Favorites, Left = History, Right = New Tab. (Can be turned off in Settings.)
+
+Tabs overview:
+- Swipe left/right to move between tab cards, press the touch area to switch tabs.
+- Swipe up (or tap Play/Pause) to close the focused tab, with an app-switcher style animation.
+- Tap Menu to close the overview.
+
+Video:
+- Videos play inline on the page. Double-tap a video, or use the page's own full screen control, to open it.
+- When a direct media URL is available it opens in the built-in full screen player; otherwise it expands within the page.
+- Full screen player: press Right to fast-forward at 2x → 32x, Left to slow down, Play/Pause to resume from that point. Left/Right while paused skip ±10s. Swipe to scrub (quick swipes accelerate). Back cancels a fast-forward/scrub and returns to where you were. Videos resume where you left off.
+- A "Full Screen Player" option in Settings can make videos always open in the built-in player instead of inline.
+
+Settings (Side menu) include:
+- Navigation: home page, favorites, history, tabs, new tab, arrow shortcuts on/off.
+- Appearance: accent theme, top navigation bar, page scaling, font size.
+- Video Playback: full screen player, player time display (remaining / total).
+- Search: search engine (Google, Bing, DuckDuckGo, Yahoo, Ecosia, Brave, Startpage).
+- Privacy: what to open on launch (last session / home page), clear history on exit, privacy mode (hide content in the app switcher).
+- Compatibility: desktop / mobile user agent.
+- Maintenance: clear cache, clear cookies.
+- Help: usage guide, show guide on launch.
