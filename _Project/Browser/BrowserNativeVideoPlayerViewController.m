@@ -398,7 +398,7 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
     if (self.scanRateLabel == nil) {
         UILabel *label = [[UILabel alloc] init];
         label.font = [UIFont monospacedDigitSystemFontOfSize:31.0 weight:UIFontWeightSemibold];
-        label.textColor = UIColor.whiteColor;
+        label.textColor = [[BrowserPreferencesStore new] themeAccentColor];
         label.textAlignment = NSTextAlignmentCenter;
         label.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.55];
         label.layer.cornerRadius = 8.0;
@@ -551,7 +551,7 @@ static NSString *BrowserNativePlayerFormatTime(NSTimeInterval time) {
         [hud addSubview:buffer];
 
         UIProgressView *progress = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
-        progress.progressTintColor = UIColor.whiteColor;
+        progress.progressTintColor = [[BrowserPreferencesStore new] themeAccentColor];
         progress.trackTintColor = UIColor.clearColor;
         progress.transform = CGAffineTransformMakeScale(1.0, 3.0);
         progress.translatesAutoresizingMaskIntoConstraints = NO;

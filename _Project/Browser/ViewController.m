@@ -63,6 +63,8 @@ static UIColor *kTextColor(void) {
 
     self.preferencesStore = [BrowserPreferencesStore new];
     [self.preferencesStore ensureUserAgentConsistency];
+    // Reinstalls reset the alternate icon while the theme preference persists.
+    [BrowserMenuCoordinator applyAppIconForCurrentTheme];
 
     self.viewModel = [BrowserViewModel new];
     self.viewModel.topNavigationBarVisible = self.preferencesStore.topNavigationBarVisible;
@@ -576,6 +578,10 @@ static UIColor *kTextColor(void) {
     [self updateTextFontSize];
 }
 
+- (void)browserDidChangeTheme {
+    [self.topMenuView applyThemeAccent];
+}
+
 - (void)browserCaptureSnapshotForCurrentTab {
     [self.tabCoordinator captureSnapshotForCurrentTab];
 }
@@ -824,6 +830,15 @@ static UIColor *kTextColor(void) {
 }
 
 - (NSString *)browserRemoteInputControllerHoverStateAtCursorPoint:(CGPoint)point {
+    // Reflect hover over the top bar (cursor mode) as a button glow.
+    CGPoint topBarPoint = [self.view convertPoint:point toView:self.topMenuView];
+    CGPoint webPointForBar = [self.view convertPoint:point toView:self.webview];
+    if (webPointForBar.y < 0) {
+        [self.topMenuView updateCursorHoverAtPoint:topBarPoint];
+    } else {
+        [self.topMenuView clearCursorHover];
+    }
+
     if (self.webview.request == nil) {
         return @"false";
     }

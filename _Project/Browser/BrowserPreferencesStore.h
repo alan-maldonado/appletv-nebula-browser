@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -6,6 +7,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (NSString *)desktopUserAgent;
 + (NSString *)mobileUserAgent;
++ (NSArray<NSString *> *)themeNames;
 
 @property (nonatomic, copy) NSString *userAgent;
 @property (nonatomic) BOOL mobileModeEnabled;
@@ -18,6 +20,10 @@ NS_ASSUME_NONNULL_BEGIN
 // Double-pressing the arrow keys triggers shortcuts (tabs/history/favorites/new
 // tab). Defaults to YES.
 @property (nonatomic) BOOL arrowDoubleTapShortcutsEnabled;
+// Accent theme: index into +themeNames (0 = Classic, the original look).
+@property (nonatomic) NSUInteger themeIndex;
+@property (nonatomic, readonly) NSString *themeName;
+@property (nonatomic, readonly) UIColor *themeAccentColor;
 @property (nonatomic) BOOL scalePagesToFit;
 @property (nonatomic) BOOL dontShowHintsOnLaunch;
 @property (nonatomic, copy) NSString *homePageURLString;

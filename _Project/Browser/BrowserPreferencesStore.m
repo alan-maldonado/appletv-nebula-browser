@@ -7,6 +7,7 @@ static NSString * const kTextFontSizeDefaultsKey = @"TextFontSize";
 static NSString * const kEnableFullscreenVideoPlaybackDefaultsKey = @"EnableFullscreenVideoPlayback";
 static NSString * const kVideoHUDShowsTotalDurationDefaultsKey = @"VideoHUDShowsTotalDuration";
 static NSString * const kArrowDoubleTapShortcutsEnabledDefaultsKey = @"ArrowDoubleTapShortcutsEnabled";
+static NSString * const kThemeIndexDefaultsKey = @"ThemeIndex";
 static NSString * const kScalePagesToFitDefaultsKey = @"ScalePagesToFit";
 static NSString * const kDontShowHintsOnLaunchDefaultsKey = @"DontShowHintsOnLaunch";
 static NSString * const kHomepageDefaultsKey = @"homepage";
@@ -23,6 +24,37 @@ static NSUInteger const kMaximumTextFontSize = 200;
 
 + (NSString *)mobileUserAgent {
     return @"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+}
+
+// Accent themes: name + color pairs. "Classic" (index 0) reproduces the original
+// white-highlight look; the rest are vivid accents for focus/progress UI.
+static NSArray<NSString *> *BrowserThemeNames(void) {
+    return @[ @"Classic", @"Nebula", @"Ocean", @"Emerald", @"Sunset",
+              @"Crimson", @"Rose", @"Sky", @"Gold", @"Lavender" ];
+}
+
+static UIColor *BrowserThemeColorAtIndex(NSUInteger index) {
+    static NSArray<UIColor *> *colors = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        colors = @[
+            [UIColor whiteColor],                                                 // Classic
+            [UIColor colorWithRed:0.48 green:0.42 blue:0.87 alpha:1.0],           // Nebula  #7B6CDE
+            [UIColor colorWithRed:0.04 green:0.52 blue:1.00 alpha:1.0],           // Ocean   #0A84FF
+            [UIColor colorWithRed:0.19 green:0.82 blue:0.35 alpha:1.0],           // Emerald #30D158
+            [UIColor colorWithRed:1.00 green:0.62 blue:0.04 alpha:1.0],           // Sunset  #FF9F0A
+            [UIColor colorWithRed:1.00 green:0.27 blue:0.23 alpha:1.0],           // Crimson #FF453A
+            [UIColor colorWithRed:1.00 green:0.18 blue:0.57 alpha:1.0],           // Rose    #FF2D92
+            [UIColor colorWithRed:0.39 green:0.82 blue:1.00 alpha:1.0],           // Sky     #64D2FF
+            [UIColor colorWithRed:1.00 green:0.84 blue:0.04 alpha:1.0],           // Gold    #FFD60A
+            [UIColor colorWithRed:0.75 green:0.35 blue:0.95 alpha:1.0],           // Lavender #BF5AF2
+        ];
+    });
+    return colors[MIN(index, colors.count - 1)];
+}
+
++ (NSArray<NSString *> *)themeNames {
+    return BrowserThemeNames();
 }
 
 - (NSUserDefaults *)defaults {
@@ -102,6 +134,28 @@ static NSUInteger const kMaximumTextFontSize = 200;
 - (void)setArrowDoubleTapShortcutsEnabled:(BOOL)arrowDoubleTapShortcutsEnabled {
     [[self defaults] setBool:arrowDoubleTapShortcutsEnabled forKey:kArrowDoubleTapShortcutsEnabledDefaultsKey];
     [[self defaults] synchronize];
+}
+
+- (NSUInteger)themeIndex {
+    NSInteger storedIndex = [[self defaults] integerForKey:kThemeIndexDefaultsKey];
+    NSUInteger themeCount = BrowserThemeNames().count;
+    if (storedIndex < 0 || (NSUInteger)storedIndex >= themeCount) {
+        return 0;
+    }
+    return (NSUInteger)storedIndex;
+}
+
+- (void)setThemeIndex:(NSUInteger)themeIndex {
+    [[self defaults] setInteger:(NSInteger)(themeIndex % BrowserThemeNames().count) forKey:kThemeIndexDefaultsKey];
+    [[self defaults] synchronize];
+}
+
+- (NSString *)themeName {
+    return BrowserThemeNames()[self.themeIndex];
+}
+
+- (UIColor *)themeAccentColor {
+    return BrowserThemeColorAtIndex(self.themeIndex);
 }
 
 - (BOOL)videoHUDShowsTotalDuration {

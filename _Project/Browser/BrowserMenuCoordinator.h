@@ -19,6 +19,7 @@
 - (void)browserHideTopNav;
 - (void)browserShowTopNav;
 - (void)browserUpdateTextFontSize;
+- (void)browserDidChangeTheme;
 - (void)browserCaptureSnapshotForCurrentTab;
 - (void)browserRecreateActiveWebViewPreservingCurrentURL;
 - (void)browserBringCursorToFront;
@@ -33,5 +34,7 @@
 - (void)showAdvancedMenu;
 - (void)showFavoritesMenu;
 - (void)showHistoryMenu;
+// Syncs the home screen icon with the current theme (call at launch and on change).
++ (void)applyAppIconForCurrentTheme;
 
 @end

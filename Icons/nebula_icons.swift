@@ -157,6 +157,8 @@ func drawCenteredText(_ ctx: CGContext, _ text: String, fontName: String, size: 
 // MARK: - Outputs
 
 let base = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "."
+// NEBULA_ALTERNATES=1 skips the primary icon flow (see bottom of file).
+let alternatesMode = ProcessInfo.processInfo.environment["NEBULA_ALTERNATES"] != nil
 
 struct StackSpec { let dir: String; let w: Int; let h: Int; let prefix: String; let hasGlyph: Bool }
 
@@ -165,7 +167,7 @@ let stacks = [
     StackSpec(dir: "App Icon - Large.imagestack", w: 1280, h: 768, prefix: "nebula", hasGlyph: false),
 ]
 
-for spec in stacks {
+for spec in (alternatesMode ? [StackSpec]() : stacks) {
     for scale in [1, 2] {
         let w = spec.w * scale, h = spec.h * scale
         let cw = CGFloat(w), ch = CGFloat(h)
@@ -206,7 +208,7 @@ let shelves = [
     ShelfSpec(dir: "Top Shelf Image Wide-1.imageset", w: 2320, h: 720, prefix: "nebula-shelf-wide"),
 ]
 
-for spec in shelves {
+for spec in (alternatesMode ? [ShelfSpec]() : shelves) {
     for scale in [1, 2] {
         let w = spec.w * scale, h = spec.h * scale
         let cw = CGFloat(w), ch = CGFloat(h)
@@ -226,3 +228,132 @@ for spec in shelves {
     }
 }
 print("done")
+
+// MARK: - Per-theme alternate icons (NEBULA_ALTERNATES=1)
+// Generates one 400x240 imagestack per theme at the asset catalog root, named
+// "AppIcon-<Theme>", for use with setAlternateIconName: and the
+// ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES build setting.
+
+if ProcessInfo.processInfo.environment["NEBULA_ALTERNATES"] != nil {
+    // (name, accent RGB) — must match BrowserPreferencesStore's theme table.
+    let themes: [(String, CGFloat, CGFloat, CGFloat)] = [
+        ("Nebula", 123, 108, 222), ("Ocean", 10, 132, 255), ("Emerald", 48, 209, 88),
+        ("Sunset", 255, 159, 10), ("Crimson", 255, 69, 58), ("Rose", 255, 45, 146),
+        ("Sky", 100, 210, 255), ("Gold", 255, 214, 10), ("Lavender", 191, 90, 242),
+    ]
+    let fm = FileManager.default
+
+    func writeJSON(_ path: String, _ contents: String) {
+        try! contents.write(toFile: path, atomically: true, encoding: .utf8)
+    }
+
+    let layerListJSON = """
+    {
+      "layers" : [
+        { "filename" : "Front.imagestacklayer" },
+        { "filename" : "Middle.imagestacklayer" },
+        { "filename" : "Back.imagestacklayer" }
+      ],
+      "info" : { "version" : 1, "author" : "xcode" }
+    }
+    """
+    let infoOnlyJSON = "{ \"info\" : { \"version\" : 1, \"author\" : \"xcode\" } }"
+
+    func imagesJSON(_ name: String) -> String {
+        return """
+        {
+          "images" : [
+            { "idiom" : "tv", "filename" : "\(name).png", "scale" : "1x" },
+            { "idiom" : "tv", "filename" : "\(name)@2x.png", "scale" : "2x" }
+          ],
+          "info" : { "version" : 1, "author" : "xcode" }
+        }
+        """
+    }
+
+    for (name, tr, tg, tb) in themes {
+        let stackDir = "\(base)/AppIcon-\(name).imagestack"
+        for layer in ["Back", "Middle", "Front"] {
+            try! fm.createDirectory(atPath: "\(stackDir)/\(layer).imagestacklayer/Content.imageset",
+                                    withIntermediateDirectories: true)
+            writeJSON("\(stackDir)/\(layer).imagestacklayer/Contents.json", infoOnlyJSON)
+            writeJSON("\(stackDir)/\(layer).imagestacklayer/Content.imageset/Contents.json",
+                      imagesJSON("icon-\(layer.lowercased())"))
+        }
+        writeJSON("\(stackDir)/Contents.json", layerListJSON)
+
+        for scale in [1, 2] {
+            let w = 400 * scale, h = 240 * scale
+            let cw = CGFloat(w), ch = CGFloat(h)
+            let suffix = scale == 1 ? "" : "@2x"
+
+            // Back: flat, theme-tinted dark background + dim stars.
+            var ctx = makeContext(w, h)
+            ctx.setFillColor(color(max(tr * 0.30, 14), max(tg * 0.30, 12), max(tb * 0.30, 22), 1.0))
+            ctx.fill(CGRect(x: 0, y: 0, width: cw, height: ch))
+            seed = 42
+            for _ in 0..<150 {
+                let x = rnd() * cw, y = rnd() * ch
+                let radius = (0.4 + rnd() * 1.4) * (ch / 240.0)
+                let alpha = (0.25 + rnd() * 0.6) * 0.55
+                ctx.setFillColor(color(255, 255, 255, alpha))
+                ctx.fillEllipse(in: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2))
+            }
+            savePNG(ctx, "\(stackDir)/Back.imagestacklayer/Content.imageset/icon-back\(suffix).png")
+
+            // Middle: empty transparent layer (kept for parallax depth parity).
+            ctx = makeContext(w, h)
+            savePNG(ctx, "\(stackDir)/Middle.imagestacklayer/Content.imageset/icon-middle\(suffix).png")
+
+            // Front: sparkles + planet + caption.
+            ctx = makeContext(w, h)
+            drawSparkles(ctx, cw, ch)
+            drawPlanet(ctx, cx: cw * 0.5, cy: ch * 0.58, r: ch * 0.195)
+            let captionSize = ch * 0.082
+            drawCenteredText(ctx, "WEB BROWSER", fontName: "HelveticaNeue-Medium", size: captionSize,
+                             centerX: cw * 0.5, y: ch * 0.175, alpha: 0.92, kern: captionSize * 0.38)
+            savePNG(ctx, "\(stackDir)/Front.imagestacklayer/Content.imageset/icon-front\(suffix).png")
+        }
+        print("theme icon: AppIcon-\(name)")
+    }
+
+    // Flattened previews shown in the settings menu while cycling themes.
+    func writePreview(_ name: String, bgR: CGFloat, bgG: CGFloat, bgB: CGFloat) {
+        let dir = "\(base)/ThemePreview-\(name).imageset"
+        try! fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        writeJSON("\(dir)/Contents.json", """
+        {
+          "images" : [
+            { "idiom" : "tv", "filename" : "preview.png", "scale" : "1x" }
+          ],
+          "info" : { "version" : 1, "author" : "xcode" }
+        }
+        """)
+        let w = 800, h = 480
+        let cw = CGFloat(w), ch = CGFloat(h)
+        let ctx = makeContext(w, h)
+        ctx.setFillColor(color(bgR, bgG, bgB, 1.0))
+        ctx.fill(CGRect(x: 0, y: 0, width: cw, height: ch))
+        seed = 42
+        for _ in 0..<150 {
+            let x = rnd() * cw, y = rnd() * ch
+            let radius = (0.4 + rnd() * 1.4) * (ch / 240.0)
+            let alpha = (0.25 + rnd() * 0.6) * 0.55
+            ctx.setFillColor(color(255, 255, 255, alpha))
+            ctx.fillEllipse(in: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2))
+        }
+        drawSparkles(ctx, cw, ch)
+        drawPlanet(ctx, cx: cw * 0.5, cy: ch * 0.58, r: ch * 0.195)
+        let captionSize = ch * 0.082
+        drawCenteredText(ctx, "WEB BROWSER", fontName: "HelveticaNeue-Medium", size: captionSize,
+                         centerX: cw * 0.5, y: ch * 0.175, alpha: 0.92, kern: captionSize * 0.38)
+        savePNG(ctx, "\(dir)/preview.png")
+    }
+
+    writePreview("Classic", bgR: 68, bgG: 52, bgB: 126) // primary icon's flat indigo
+    for (name, tr, tg, tb) in themes {
+        writePreview(name, bgR: max(tr * 0.30, 14), bgG: max(tg * 0.30, 12), bgB: max(tb * 0.30, 22))
+    }
+    print("alternates done")
+    exit(0)
+}

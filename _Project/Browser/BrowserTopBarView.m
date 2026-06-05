@@ -1,4 +1,5 @@
 #import "BrowserTopBarView.h"
+#import "BrowserPreferencesStore.h"
 
 #if __has_include(<UIKit/UIGlassEffect.h>)
 #import <UIKit/UIGlassEffect.h>
@@ -114,7 +115,7 @@ static CGFloat const kTopBarUniformFocusHeight = 72.0;
     self.focusGlowView.backgroundColor = UIColor.clearColor;
     self.focusGlowView.userInteractionEnabled = NO;
     self.focusGlowView.hidden = YES;
-    self.focusGlowView.layer.shadowColor = [UIColor colorWithRed:0.23 green:0.57 blue:1.0 alpha:1.0].CGColor;
+    self.focusGlowView.layer.shadowColor = [[BrowserPreferencesStore new] themeAccentColor].CGColor;
     self.focusGlowView.layer.shadowOffset = CGSizeZero;
     self.focusGlowView.layer.shadowOpacity = 0.0;
     self.focusGlowView.layer.shadowRadius = 18.0;
@@ -423,6 +424,55 @@ static CGFloat const kTopBarUniformFocusHeight = 72.0;
         return;
     }
     [delegate browserTopBarView:self didTriggerAction:button.topBarAction];
+}
+
+- (void)applyThemeAccent {
+    self.focusGlowView.layer.shadowColor = [[BrowserPreferencesStore new] themeAccentColor].CGColor;
+}
+
+// Cursor hover: glow the button under the point (or clear if none). Skipped in
+// focus mode, which drives the glow via didUpdateFocusInContext: itself.
+- (void)updateCursorHoverAtPoint:(CGPoint)pointInView {
+    if (self.focusModeActive || self.hidden || self.alpha <= 0.01) {
+        return;
+    }
+    BrowserTopBarFocusButton *hoveredButton = nil;
+    for (BrowserTopBarFocusButton *button in self.focusButtons) {
+        CGRect hitFrame = [button.superview convertRect:button.frame toView:self];
+        hitFrame = CGRectInset(hitFrame, -12.0, -12.0);
+        if (CGRectContainsPoint(hitFrame, pointInView)) {
+            hoveredButton = button;
+            break;
+        }
+    }
+
+    if (hoveredButton == nil) {
+        [self clearCursorHover];
+        return;
+    }
+
+    [self ensureFocusGlowViewAttached];
+    CGRect glowFrame = [self glowFrameForButton:hoveredButton];
+    self.focusGlowView.hidden = NO;
+    self.focusGlowView.frame = glowFrame;
+    self.focusGlowView.layer.cornerRadius = MIN(CGRectGetHeight(glowFrame) / 2.0, 24.0);
+    self.focusGlowView.layer.shadowPath = [UIBezierPath bezierPathWithRoundedRect:self.focusGlowView.bounds
+                                                                     cornerRadius:self.focusGlowView.layer.cornerRadius].CGPath;
+    self.focusGlowView.layer.shadowRadius = 14.0;
+    [UIView animateWithDuration:0.12 animations:^{
+        self.focusGlowView.alpha = 1.0;
+        self.focusGlowView.layer.shadowOpacity = 0.6;
+    }];
+}
+
+- (void)clearCursorHover {
+    if (self.focusModeActive) {
+        return;
+    }
+    [UIView animateWithDuration:0.12 animations:^{
+        self.focusGlowView.alpha = 0.0;
+        self.focusGlowView.layer.shadowOpacity = 0.0;
+    }];
 }
 
 - (BOOL)handleCursorClickAtPoint:(CGPoint)pointInView {

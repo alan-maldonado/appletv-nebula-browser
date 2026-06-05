@@ -37,10 +37,15 @@ typedef NS_ENUM(NSInteger, BrowserTopBarAction) {
 
 - (CGRect)interactiveFrameForView:(UIView *)view;
 - (void)setFocusModeActive:(BOOL)focusModeActive;
+// Re-reads the theme accent for the focus glow (call after a theme change).
+- (void)applyThemeAccent;
 - (nullable UIView *)preferredFocusItem;
 // Cursor-mode click: triggers the button under the given point (in this view's
 // coordinates). Returns NO if no button is there.
 - (BOOL)handleCursorClickAtPoint:(CGPoint)pointInView;
+// Cursor hover: glow the button under the point, or clear the hover highlight.
+- (void)updateCursorHoverAtPoint:(CGPoint)pointInView;
+- (void)clearCursorHover;
 
 @end
 

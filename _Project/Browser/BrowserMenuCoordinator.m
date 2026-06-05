@@ -2,6 +2,42 @@
 #import "BrowserPreferencesStore.h"
 #import "BrowserWebView.h"
 
+#import <objc/message.h>
+#import <objc/runtime.h>
+
+// setAlternateIconName: presents a system "You have changed the icon" alert that
+// can't be disabled by API. While this flag is set (briefly around an icon
+// change), swallow UIAlertController presentations so that alert never appears.
+static BOOL sBrowserSuppressIconChangeAlert = NO;
+
+@implementation UIViewController (BrowserIconAlertSuppression)
+
++ (void)load {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Method original = class_getInstanceMethod(self, @selector(presentViewController:animated:completion:));
+        Method replacement = class_getInstanceMethod(self, @selector(browser_presentViewController:animated:completion:));
+        if (original != NULL && replacement != NULL) {
+            method_exchangeImplementations(original, replacement);
+        }
+    });
+}
+
+- (void)browser_presentViewController:(UIViewController *)viewControllerToPresent
+                             animated:(BOOL)animated
+                           completion:(void (^)(void))completion {
+    if (sBrowserSuppressIconChangeAlert && [viewControllerToPresent isKindOfClass:[UIAlertController class]]) {
+        NSLog(@"[Theme] suppressed icon-change system alert");
+        if (completion != nil) {
+            completion();
+        }
+        return;
+    }
+    [self browser_presentViewController:viewControllerToPresent animated:animated completion:completion];
+}
+
+@end
+
 static UIColor *MenuTextColor(void) {
     if (@available(tvOS 13, *)) {
         return UIColor.labelColor;
@@ -24,6 +60,9 @@ typedef NSString * _Nullable (^BrowserAdvancedMenuItemAdjustHandler)(NSInteger d
 @property (nonatomic) UIAlertActionStyle style;
 @property (nonatomic, copy) BrowserAdvancedMenuItemHandler handler;
 @property (nonatomic, copy) BrowserAdvancedMenuItemAdjustHandler adjustHandler;
+// Optional: name of an image to preview beside the menu while this row is
+// focused (re-queried after every adjustment).
+@property (nonatomic, copy) NSString * _Nullable (^previewImageNameProvider)(void);
 
 + (instancetype)itemWithTitle:(NSString *)title
                         style:(UIAlertActionStyle)style
@@ -86,6 +125,7 @@ typedef NSString * _Nullable (^BrowserAdvancedMenuItemAdjustHandler)(NSInteger d
 @property (nonatomic) BOOL didAnimateIn;
 @property (nonatomic) BOOL dismissalInProgress;
 @property (nonatomic) BOOL usingNativeGlassEffect;
+@property (nonatomic) UIImageView *previewImageView;
 
 @end
 
@@ -334,10 +374,8 @@ typedef NSString * _Nullable (^BrowserAdvancedMenuItemAdjustHandler)(NSInteger d
         UIView *focusBackgroundView = [UIView new];
         focusBackgroundView.translatesAutoresizingMaskIntoConstraints = NO;
         focusBackgroundView.tag = kMenuFocusBackgroundTag;
-        focusBackgroundView.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.5];
         focusBackgroundView.layer.cornerRadius = 12.0;
         focusBackgroundView.layer.borderWidth = 2.0;
-        focusBackgroundView.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.9].CGColor;
         focusBackgroundView.alpha = 0.0;
         [cell.contentView addSubview:focusBackgroundView];
 
@@ -368,6 +406,11 @@ typedef NSString * _Nullable (^BrowserAdvancedMenuItemAdjustHandler)(NSInteger d
     titleLabel.text = [self displayTitleForItem:item];
     UIColor *titleColor = (item.style == UIAlertActionStyleDestructive) ? UIColor.redColor : UIColor.whiteColor;
     titleLabel.textColor = titleColor;
+    // Re-apply the accent every time (cells are reused): keeps all rows in sync
+    // with the current theme even after scrolling.
+    UIColor *accentColor = [[BrowserPreferencesStore new] themeAccentColor];
+    focusBackgroundView.backgroundColor = [accentColor colorWithAlphaComponent:0.5];
+    focusBackgroundView.layer.borderColor = [accentColor colorWithAlphaComponent:0.9].CGColor;
     focusBackgroundView.alpha = cell.isFocused ? 1.0 : 0.0;
     return cell;
 }
@@ -388,6 +431,52 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
         UIView *nextFocusBackground = [nextCell.contentView viewWithTag:9292];
         nextFocusBackground.alpha = 1.0;
     } completion:nil];
+
+    [self updatePreviewForItemAtIndexPath:nextIndexPath];
+}
+
+// Floating preview card (left of the panel) for rows that provide one, e.g. the
+// theme row showing the app icon that will be applied.
+- (void)updatePreviewForItemAtIndexPath:(NSIndexPath *)indexPath {
+    BrowserAdvancedMenuItem *item = nil;
+    if (indexPath != nil &&
+        (NSUInteger)indexPath.section < self.sections.count &&
+        (NSUInteger)indexPath.row < self.sections[(NSUInteger)indexPath.section].items.count) {
+        item = self.sections[(NSUInteger)indexPath.section].items[(NSUInteger)indexPath.row];
+    }
+
+    NSString *imageName = item.previewImageNameProvider != nil ? item.previewImageNameProvider() : nil;
+    UIImage *previewImage = imageName.length > 0 ? [UIImage imageNamed:imageName] : nil;
+    if (previewImage == nil) {
+        [UIView animateWithDuration:0.2 animations:^{
+            self.previewImageView.alpha = 0.0;
+        }];
+        return;
+    }
+
+    if (self.previewImageView == nil) {
+        UIImageView *imageView = [[UIImageView alloc] init];
+        imageView.contentMode = UIViewContentModeScaleAspectFit;
+        imageView.layer.cornerRadius = 18.0;
+        imageView.layer.masksToBounds = YES;
+        imageView.layer.borderWidth = 1.0;
+        imageView.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.25].CGColor;
+        imageView.alpha = 0.0;
+        imageView.translatesAutoresizingMaskIntoConstraints = NO;
+        [self.view insertSubview:imageView belowSubview:self.panelView];
+        [NSLayoutConstraint activateConstraints:@[
+            [imageView.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+            [imageView.centerXAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:560.0],
+            [imageView.widthAnchor constraintEqualToConstant:560.0],
+            [imageView.heightAnchor constraintEqualToConstant:336.0],
+        ]];
+        self.previewImageView = imageView;
+    }
+
+    self.previewImageView.image = previewImage;
+    [UIView animateWithDuration:0.2 animations:^{
+        self.previewImageView.alpha = 1.0;
+    }];
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -461,7 +550,22 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
         UILabel *titleLabel = (UILabel *)[cell.contentView viewWithTag:9191];
         titleLabel.text = [self displayTitleForItem:item];
     }
+    [self refreshAccentColorsOnVisibleCells];
+    [self updatePreviewForItemAtIndexPath:indexPath];
     return YES;
+}
+
+// Live theme preview: re-tint the focus highlights of the cells already on
+// screen (they are colored at creation time otherwise).
+- (void)refreshAccentColorsOnVisibleCells {
+    UIColor *accentColor = [[BrowserPreferencesStore new] themeAccentColor];
+    [UIView animateWithDuration:0.2 animations:^{
+        for (UITableViewCell *cell in self.tableView.visibleCells) {
+            UIView *focusBackgroundView = [cell.contentView viewWithTag:9292];
+            focusBackgroundView.backgroundColor = [accentColor colorWithAlphaComponent:0.5];
+            focusBackgroundView.layer.borderColor = [accentColor colorWithAlphaComponent:0.9].CGColor;
+        }
+    }];
 }
 
 @end
@@ -916,26 +1020,71 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
 }
 
 - (BrowserAdvancedMenuItem *)topNavigationVisibilityMenuItem {
-    NSString *title = self.host.browserTopMenuShowing ? @"Hide Top Navigation bar" : @"Show Top Navigation bar";
-    return [self advancedMenuItemWithTitle:title
-                                     style:UIAlertActionStyleDefault
-                                   handler:^{
+    NSString *(^titleForState)(BOOL) = ^NSString *(BOOL showing) {
+        return showing ? @"Top Navigation Bar: Visible" : @"Top Navigation Bar: Hidden";
+    };
+    BrowserAdvancedMenuItem *item = [self advancedMenuItemWithTitle:titleForState(self.host.browserTopMenuShowing)
+                                                              style:UIAlertActionStyleDefault
+                                                            handler:nil];
+    item.adjustHandler = ^NSString *(__unused NSInteger direction) {
+        // The bar shows/hides live behind the menu — no confirmation needed.
         if (self.host.browserTopMenuShowing) {
-            UIAlertController *alertController = [self browserAlertControllerWithTitle:@"Hide Top Navigation bar?"
-                                                                               message:@"You can still open the side menu by double-tapping the Play/Pause button."];
-            [alertController addAction:[self browserActionWithTitle:@"Cancel"
-                                                              style:UIAlertActionStyleCancel
-                                                            handler:nil]];
-            [alertController addAction:[self browserActionWithTitle:@"Hide Bar"
-                                                              style:UIAlertActionStyleDestructive
-                                                            handler:^(__unused UIAlertAction *action) {
-                [self.host browserHideTopNav];
-            }]];
-            [self.host browserPresentViewController:alertController];
+            [self.host browserHideTopNav];
         } else {
             [self.host browserShowTopNav];
         }
+        return titleForState(self.host.browserTopMenuShowing);
+    };
+    return item;
+}
+
+- (BrowserAdvancedMenuItem *)themeMenuItem {
+    NSString *(^titleForTheme)(void) = ^NSString * {
+        return [NSString stringWithFormat:@"Theme: %@", [[BrowserPreferencesStore new] themeName]];
+    };
+    BrowserPreferencesStore *preferencesStore = self.preferencesStore;
+    BrowserAdvancedMenuItem *item = [self advancedMenuItemWithTitle:titleForTheme()
+                                                              style:UIAlertActionStyleDefault
+                                                            handler:nil];
+    item.adjustHandler = ^NSString *(NSInteger direction) {
+        NSUInteger themeCount = [BrowserPreferencesStore themeNames].count;
+        NSInteger nextIndex = ((NSInteger)preferencesStore.themeIndex + direction + (NSInteger)themeCount) % (NSInteger)themeCount;
+        preferencesStore.themeIndex = (NSUInteger)nextIndex;
+        [BrowserMenuCoordinator applyAppIconForCurrentTheme];
+        [self.host browserDidChangeTheme];
+        return titleForTheme();
+    };
+    item.previewImageNameProvider = ^NSString * {
+        return [NSString stringWithFormat:@"ThemePreview-%@", [[BrowserPreferencesStore new] themeName]];
+    };
+    return item;
+}
+
+// Swap the home screen icon to the theme's variant (Classic = primary icon).
++ (void)applyAppIconForCurrentTheme {
+    UIApplication *application = UIApplication.sharedApplication;
+    if (![application supportsAlternateIcons]) {
+        return;
+    }
+    BrowserPreferencesStore *preferencesStore = [BrowserPreferencesStore new];
+    NSString *iconName = preferencesStore.themeIndex == 0
+        ? nil
+        : [NSString stringWithFormat:@"AppIcon-%@", preferencesStore.themeName];
+    if ((iconName == nil && application.alternateIconName == nil) ||
+        [iconName isEqualToString:application.alternateIconName]) {
+        return;
+    }
+    // setAlternateIconName: presents an undismissable system alert; suppress it
+    // via the presentViewController swizzle for a short window around the change.
+    sBrowserSuppressIconChangeAlert = YES;
+    [application setAlternateIconName:iconName completionHandler:^(NSError *error) {
+        if (error != nil) {
+            NSLog(@"[Theme] setAlternateIconName %@ failed: %@", iconName ?: @"(primary)", error);
+        }
     }];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        sBrowserSuppressIconChangeAlert = NO;
+    });
 }
 
 - (BrowserAdvancedMenuItem *)homePageMenuItem {
@@ -1156,6 +1305,7 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
         ]],
         [BrowserAdvancedMenuSection sectionWithTitle:@"Appearance"
                                                items:@[
+            [self themeMenuItem],
             [self topNavigationVisibilityMenuItem],
             [self pageScalingMenuItem],
             [self fontSizeAdjustableMenuItem],
