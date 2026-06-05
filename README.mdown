@@ -1,6 +1,8 @@
 Nebula Browser
 =============
 
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/T1G020UH4L)
+
 ![Browsing on Apple TV](/screen01.png?raw=true "Nebula Browser on Apple TV")
 
 ![Tab overview](/screen02.png?raw=true "Nebula Browser tab overview")
@@ -27,7 +29,7 @@ Support
 
 Nebula Browser is free and open source — you build it yourself from this repo, nothing to buy. If you enjoy it and want to support ongoing development and the features the community asks for, you can buy me a coffee:
 
-☕️ **[ko-fi.com/nebulabrowser](https://ko-fi.com/nebulabrowser)**
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/T1G020UH4L)
 
 ![Support Nebula Browser](/screen05.png?raw=true "Support screen with donation QR")
 
