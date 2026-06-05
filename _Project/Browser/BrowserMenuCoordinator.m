@@ -1114,6 +1114,21 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
     }];
 }
 
+- (BrowserAdvancedMenuItem *)showGuideOnLaunchMenuItem {
+    NSString *(^titleForState)(BOOL) = ^NSString *(BOOL showOnLaunch) {
+        return showOnLaunch ? @"Show Guide On Launch: On" : @"Show Guide On Launch: Off";
+    };
+    BrowserPreferencesStore *preferencesStore = self.preferencesStore;
+    BrowserAdvancedMenuItem *item = [self advancedMenuItemWithTitle:titleForState(!preferencesStore.dontShowHintsOnLaunch)
+                                                              style:UIAlertActionStyleDefault
+                                                            handler:nil];
+    item.adjustHandler = ^NSString *(__unused NSInteger direction) {
+        preferencesStore.dontShowHintsOnLaunch = !preferencesStore.dontShowHintsOnLaunch;
+        return titleForState(!preferencesStore.dontShowHintsOnLaunch);
+    };
+    return item;
+}
+
 - (UIAlertAction *)wkWebViewProofOfConceptAction {
     return [self browserActionWithTitle:@"Open WKWebView PoC"
                                   style:UIAlertActionStyleDefault
@@ -1332,6 +1347,7 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
         [BrowserAdvancedMenuSection sectionWithTitle:@"Help"
                                                items:@[
             [self usageGuideMenuItem],
+            [self showGuideOnLaunchMenuItem],
         ]],
     ];
 }

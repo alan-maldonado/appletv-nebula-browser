@@ -8,6 +8,7 @@ static NSString * const kEnableFullscreenVideoPlaybackDefaultsKey = @"EnableFull
 static NSString * const kVideoHUDShowsTotalDurationDefaultsKey = @"VideoHUDShowsTotalDuration";
 static NSString * const kArrowDoubleTapShortcutsEnabledDefaultsKey = @"ArrowDoubleTapShortcutsEnabled";
 static NSString * const kThemeIndexDefaultsKey = @"ThemeIndex";
+static NSString * const kSettingsHintShownCountDefaultsKey = @"SettingsHintShownCount";
 static NSString * const kScalePagesToFitDefaultsKey = @"ScalePagesToFit";
 static NSString * const kDontShowHintsOnLaunchDefaultsKey = @"DontShowHintsOnLaunch";
 static NSString * const kHomepageDefaultsKey = @"homepage";
@@ -133,6 +134,15 @@ static UIColor *BrowserThemeColorAtIndex(NSUInteger index) {
 
 - (void)setArrowDoubleTapShortcutsEnabled:(BOOL)arrowDoubleTapShortcutsEnabled {
     [[self defaults] setBool:arrowDoubleTapShortcutsEnabled forKey:kArrowDoubleTapShortcutsEnabledDefaultsKey];
+    [[self defaults] synchronize];
+}
+
+- (NSUInteger)settingsHintShownCount {
+    return (NSUInteger)MAX((NSInteger)0, [[self defaults] integerForKey:kSettingsHintShownCountDefaultsKey]);
+}
+
+- (void)setSettingsHintShownCount:(NSUInteger)settingsHintShownCount {
+    [[self defaults] setInteger:(NSInteger)settingsHintShownCount forKey:kSettingsHintShownCountDefaultsKey];
     [[self defaults] synchronize];
 }
 

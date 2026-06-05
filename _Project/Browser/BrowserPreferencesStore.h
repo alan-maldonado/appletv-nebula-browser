@@ -20,6 +20,9 @@ NS_ASSUME_NONNULL_BEGIN
 // Double-pressing the arrow keys triggers shortcuts (tabs/history/favorites/new
 // tab). Defaults to YES.
 @property (nonatomic) BOOL arrowDoubleTapShortcutsEnabled;
+// How many times the "Settings is in the Quick Menu" tip has been shown while
+// the top bar is hidden (capped at 3 — see ViewController).
+@property (nonatomic) NSUInteger settingsHintShownCount;
 // Accent theme: index into +themeNames (0 = Classic, the original look).
 @property (nonatomic) NSUInteger themeIndex;
 @property (nonatomic, readonly) NSString *themeName;

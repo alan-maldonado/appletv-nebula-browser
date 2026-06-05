@@ -30,6 +30,97 @@ static UIColor *kTextColor(void) {
     }
 }
 
+#pragma mark - Usage Guide (scrollable)
+
+@interface BrowserUsageGuideViewController : UIViewController
+@property (nonatomic, copy) NSString *guideText;
+@property (nonatomic, copy) void (^dismissHandler)(void);
+@property (nonatomic) UITextView *textView;
+@end
+
+@implementation BrowserUsageGuideViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.55];
+
+    UIVisualEffectView *panel = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleDark]];
+    panel.translatesAutoresizingMaskIntoConstraints = NO;
+    panel.layer.cornerRadius = 24.0;
+    panel.layer.masksToBounds = YES;
+    [self.view addSubview:panel];
+
+    UILabel *title = [UILabel new];
+    title.translatesAutoresizingMaskIntoConstraints = NO;
+    title.text = @"Usage Guide";
+    title.font = [UIFont boldSystemFontOfSize:40.0];
+    title.textColor = UIColor.whiteColor;
+    [panel.contentView addSubview:title];
+
+    UITextView *textView = [UITextView new];
+    textView.translatesAutoresizingMaskIntoConstraints = NO;
+    textView.backgroundColor = UIColor.clearColor;
+    textView.scrollEnabled = YES;
+    textView.showsVerticalScrollIndicator = YES;
+    textView.userInteractionEnabled = YES;
+    textView.textColor = [UIColor colorWithWhite:1.0 alpha:0.92];
+    textView.font = [UIFont systemFontOfSize:28.0 weight:UIFontWeightRegular];
+    textView.text = self.guideText;
+    // tvOS: lets the remote scroll the text and focus the view.
+    if (@available(tvOS 11.0, *)) {
+        textView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+    }
+    [panel.contentView addSubview:textView];
+    self.textView = textView;
+
+    UILabel *footer = [UILabel new];
+    footer.translatesAutoresizingMaskIntoConstraints = NO;
+    footer.text = @"Press Menu to close";
+    footer.font = [UIFont systemFontOfSize:22.0 weight:UIFontWeightRegular];
+    footer.textColor = [UIColor colorWithWhite:1.0 alpha:0.6];
+    footer.textAlignment = NSTextAlignmentCenter;
+    [panel.contentView addSubview:footer];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [panel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [panel.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+        [panel.widthAnchor constraintEqualToConstant:980.0],
+        [panel.heightAnchor constraintEqualToConstant:760.0],
+
+        [title.topAnchor constraintEqualToAnchor:panel.contentView.topAnchor constant:48.0],
+        [title.leadingAnchor constraintEqualToAnchor:panel.contentView.leadingAnchor constant:60.0],
+
+        [textView.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:24.0],
+        [textView.leadingAnchor constraintEqualToAnchor:panel.contentView.leadingAnchor constant:56.0],
+        [textView.trailingAnchor constraintEqualToAnchor:panel.contentView.trailingAnchor constant:-56.0],
+        [textView.bottomAnchor constraintEqualToAnchor:footer.topAnchor constant:-16.0],
+
+        [footer.leadingAnchor constraintEqualToAnchor:panel.contentView.leadingAnchor constant:60.0],
+        [footer.trailingAnchor constraintEqualToAnchor:panel.contentView.trailingAnchor constant:-60.0],
+        [footer.bottomAnchor constraintEqualToAnchor:panel.contentView.bottomAnchor constant:-40.0],
+    ]];
+}
+
+- (NSArray<id<UIFocusEnvironment>> *)preferredFocusEnvironments {
+    return self.textView != nil ? @[self.textView] : [super preferredFocusEnvironments];
+}
+
+- (void)pressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+    UIPress *press = presses.anyObject;
+    if (press != nil && press.type == UIPressTypeMenu) {
+        void (^handler)(void) = self.dismissHandler;
+        [self dismissViewControllerAnimated:YES completion:^{
+            if (handler != nil) {
+                handler();
+            }
+        }];
+        return;
+    }
+    [super pressesEnded:presses withEvent:event];
+}
+
+@end
+
 @interface ViewController () <BrowserMenuCoordinatorHost, BrowserPageActionCoordinatorHost, BrowserRemoteInputControllerHost, BrowserTabCoordinatorHost, BrowserTabOverviewControllerHost, BrowserTopBarViewDelegate, BrowserVideoPlaybackCoordinatorHost>
 
 @property (nonatomic) BrowserDOMInteractionService *domInteractionService;
@@ -49,6 +140,7 @@ static UIColor *kTextColor(void) {
 // Double-back-to-exit: timestamp of the last Menu press at the root of history.
 @property (nonatomic) CFAbsoluteTime lastExitBackPressTimestamp;
 @property (nonatomic) UILabel *exitHintLabel;
+@property (nonatomic) NSLayoutConstraint *exitHintWidthConstraint;
 
 @end
 
@@ -408,7 +500,24 @@ static UIColor *kTextColor(void) {
         }
     }
 
+    [alertController addAction:[UIAlertAction actionWithTitle:@"Settings"
+                                                        style:UIAlertActionStyleDefault
+                                                      handler:^(__unused UIAlertAction *action) {
+        [self showAdvancedMenu];
+    }]];
+
     [alertController addAction:[UIAlertAction actionWithTitle:nil style:UIAlertActionStyleCancel handler:nil]];
+
+    // When the top bar is hidden, Settings is otherwise hard to find. Surface a
+    // one-line tip in the Quick Menu the first few times in that state.
+    if (!self.browserTopMenuShowing) {
+        NSUInteger shownCount = self.preferencesStore.settingsHintShownCount;
+        if (shownCount < 3) {
+            alertController.message = @"Tip: open Settings below to show the top bar again or change options.";
+            self.preferencesStore.settingsHintShownCount = shownCount + 1;
+        }
+    }
+
     [self presentViewController:alertController animated:YES completion:nil];
 }
 
@@ -430,28 +539,11 @@ static UIColor *kTextColor(void) {
         @"• Swipe to move through the video; while paused, quick swipes accelerate.\n"
         @"• Back cancels fast-forward or swiping and returns to where you were.\n"
         @"• Videos resume where you left off.";
-    UIAlertController *alertController = [UIAlertController alertControllerWithTitle:@"Usage Guide"
-                                                                             message:guide
-                                                                      preferredStyle:UIAlertControllerStyleAlert];
-
-    __weak typeof(self) weakSelf = self;
-    if (self.preferencesStore.dontShowHintsOnLaunch) {
-        [alertController addAction:[UIAlertAction actionWithTitle:@"Always Show On Launch"
-                                                            style:UIAlertActionStyleDestructive
-                                                          handler:^(__unused UIAlertAction *action) {
-            weakSelf.preferencesStore.dontShowHintsOnLaunch = NO;
-        }]];
-    } else {
-        [alertController addAction:[UIAlertAction actionWithTitle:@"Don't Show This Again"
-                                                            style:UIAlertActionStyleDestructive
-                                                          handler:^(__unused UIAlertAction *action) {
-            weakSelf.preferencesStore.dontShowHintsOnLaunch = YES;
-        }]];
-    }
-    [alertController addAction:[UIAlertAction actionWithTitle:@"Dismiss"
-                                                        style:UIAlertActionStyleCancel
-                                                      handler:nil]];
-    [self presentViewController:alertController animated:YES completion:nil];
+    BrowserUsageGuideViewController *guideViewController = [[BrowserUsageGuideViewController alloc] init];
+    guideViewController.guideText = guide;
+    guideViewController.modalPresentationStyle = UIModalPresentationOverFullScreen;
+    guideViewController.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
+    [self presentViewController:guideViewController animated:YES completion:nil];
 }
 
 - (void)browserHandlePrimaryAction {
@@ -566,6 +658,8 @@ static UIColor *kTextColor(void) {
     self.viewModel.topNavigationBarVisible = NO;
     self.preferencesStore.topNavigationBarVisible = NO;
     [self.tabCoordinator setTopNavigationVisible:NO];
+    // Make the recovery path explicit (the bar that held those controls is gone).
+    [self showToastWithText:@"Top bar hidden. Press Play/Pause → Settings to bring it back." width:760.0];
 }
 
 - (void)browserShowTopNav {
@@ -766,30 +860,38 @@ static UIColor *kTextColor(void) {
 }
 
 - (void)showExitHintToast {
+    [self showToastWithText:@"Press Back again to exit" width:520.0];
+}
+
+- (void)showToastWithText:(NSString *)text width:(CGFloat)width {
     if (self.exitHintLabel == nil) {
         UILabel *label = [[UILabel alloc] init];
         label.font = [UIFont systemFontOfSize:29.0 weight:UIFontWeightSemibold];
         label.textColor = UIColor.whiteColor;
         label.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.75];
         label.textAlignment = NSTextAlignmentCenter;
+        label.numberOfLines = 0;
         label.layer.cornerRadius = 10.0;
         label.layer.masksToBounds = YES;
-        label.text = @"Press Back again to exit";
         label.translatesAutoresizingMaskIntoConstraints = NO;
         [self.view addSubview:label];
+        self.exitHintWidthConstraint = [label.widthAnchor constraintEqualToConstant:width];
         [NSLayoutConstraint activateConstraints:@[
             [label.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
             [label.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor constant:-60.0],
-            [label.widthAnchor constraintEqualToConstant:520.0],
-            [label.heightAnchor constraintEqualToConstant:64.0],
+            self.exitHintWidthConstraint,
+            [label.heightAnchor constraintGreaterThanOrEqualToConstant:64.0],
         ]];
         self.exitHintLabel = label;
     }
+    self.exitHintLabel.text = text;
+    self.exitHintWidthConstraint.constant = width;
     [self.view bringSubviewToFront:self.exitHintLabel];
+    [self.exitHintLabel.layer removeAllAnimations];
     self.exitHintLabel.alpha = 1.0;
     self.exitHintLabel.hidden = NO;
     [UIView animateWithDuration:0.3
-                          delay:1.7
+                          delay:2.4
                         options:UIViewAnimationOptionBeginFromCurrentState
                      animations:^{
         self.exitHintLabel.alpha = 0.0;
