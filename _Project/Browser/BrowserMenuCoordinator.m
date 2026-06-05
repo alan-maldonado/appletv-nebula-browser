@@ -1210,6 +1210,16 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
     return item;
 }
 
+- (BrowserAdvancedMenuItem *)supportMenuItem {
+    BrowserAdvancedMenuItem *item = [self advancedMenuItemWithTitle:@"Support Nebula ♥"
+                                                              style:UIAlertActionStyleDefault
+                                                            handler:^{
+        [self.host browserShowDonate];
+    }];
+    item.explanation = @"Nebula Browser is free and open source. If you'd like to support its ongoing development and help shape new features, this opens a code you can scan to contribute. Thank you!";
+    return item;
+}
+
 - (BrowserAdvancedMenuItem *)usageGuideMenuItem {
     return [self advancedMenuItemWithTitle:@"Usage Guide"
                                      style:UIAlertActionStyleDefault
@@ -1517,6 +1527,7 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
                                                items:@[
             [self usageGuideMenuItem],
             [self showGuideOnLaunchMenuItem],
+            [self supportMenuItem],
         ]],
     ];
 }

@@ -20,6 +20,16 @@ Nebula Browser was developed with the help of AI ([Claude Code](https://claude.c
 This code is provided as is with no warranty or liability. Use at your own risk and do ***not*** distribute builds of this project on the App Store.
 
 
+Support
+=============
+
+Nebula Browser is free and open source — you build it yourself from this repo, nothing to buy. If you enjoy it and want to support ongoing development and the features the community asks for, you can buy me a coffee:
+
+☕️ **[ko-fi.com/nebulabrowser](https://ko-fi.com/nebulabrowser)**
+
+Have an idea or a feature request? Open an issue or drop it on the Ko-fi page. Thank you for the support! 🌌
+
+
 How to Install Nebula Browser
 =============
 

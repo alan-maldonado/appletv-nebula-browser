@@ -187,6 +187,103 @@ static UIColor *kTextColor(void) {
 
 @end
 
+#pragma mark - Support / Donate
+
+@interface BrowserDonateViewController : UIViewController
+@end
+
+@implementation BrowserDonateViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    self.view.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.6];
+
+    UIVisualEffectView *panel = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleDark]];
+    panel.translatesAutoresizingMaskIntoConstraints = NO;
+    panel.layer.cornerRadius = 28.0;
+    panel.layer.masksToBounds = YES;
+    [self.view addSubview:panel];
+
+    UILabel *title = [UILabel new];
+    title.translatesAutoresizingMaskIntoConstraints = NO;
+    title.text = @"Support Nebula Browser";
+    title.font = [UIFont boldSystemFontOfSize:46.0];
+    title.textColor = UIColor.whiteColor;
+    title.textAlignment = NSTextAlignmentCenter;
+    [panel.contentView addSubview:title];
+
+    UILabel *message = [UILabel new];
+    message.translatesAutoresizingMaskIntoConstraints = NO;
+    message.numberOfLines = 0;
+    message.text = @"Nebula Browser is free and open source. If you enjoy it, scan the code to support ongoing development and the features the community wants most. Thank you!";
+    message.font = [UIFont systemFontOfSize:28.0 weight:UIFontWeightRegular];
+    message.textColor = [UIColor colorWithWhite:1.0 alpha:0.85];
+    message.textAlignment = NSTextAlignmentCenter;
+    [panel.contentView addSubview:message];
+
+    UIImageView *qr = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"DonateQR"]];
+    qr.translatesAutoresizingMaskIntoConstraints = NO;
+    qr.contentMode = UIViewContentModeScaleAspectFit;
+    qr.layer.cornerRadius = 12.0;
+    qr.layer.masksToBounds = YES;
+    [panel.contentView addSubview:qr];
+
+    UILabel *urlLabel = [UILabel new];
+    urlLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    urlLabel.text = @"ko-fi.com/nebulabrowser";
+    urlLabel.font = [UIFont monospacedDigitSystemFontOfSize:28.0 weight:UIFontWeightSemibold];
+    urlLabel.textColor = UIColor.whiteColor;
+    urlLabel.textAlignment = NSTextAlignmentCenter;
+    [panel.contentView addSubview:urlLabel];
+
+    UILabel *footer = [UILabel new];
+    footer.translatesAutoresizingMaskIntoConstraints = NO;
+    footer.text = @"Press Menu to close";
+    footer.font = [UIFont systemFontOfSize:22.0 weight:UIFontWeightRegular];
+    footer.textColor = [UIColor colorWithWhite:1.0 alpha:0.6];
+    footer.textAlignment = NSTextAlignmentCenter;
+    [panel.contentView addSubview:footer];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [panel.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [panel.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+        [panel.widthAnchor constraintEqualToConstant:760.0],
+
+        [title.topAnchor constraintEqualToAnchor:panel.contentView.topAnchor constant:48.0],
+        [title.leadingAnchor constraintEqualToAnchor:panel.contentView.leadingAnchor constant:48.0],
+        [title.trailingAnchor constraintEqualToAnchor:panel.contentView.trailingAnchor constant:-48.0],
+
+        [message.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:20.0],
+        [message.leadingAnchor constraintEqualToAnchor:panel.contentView.leadingAnchor constant:60.0],
+        [message.trailingAnchor constraintEqualToAnchor:panel.contentView.trailingAnchor constant:-60.0],
+
+        [qr.topAnchor constraintEqualToAnchor:message.bottomAnchor constant:36.0],
+        [qr.centerXAnchor constraintEqualToAnchor:panel.contentView.centerXAnchor],
+        [qr.widthAnchor constraintEqualToConstant:360.0],
+        [qr.heightAnchor constraintEqualToConstant:360.0],
+
+        [urlLabel.topAnchor constraintEqualToAnchor:qr.bottomAnchor constant:24.0],
+        [urlLabel.leadingAnchor constraintEqualToAnchor:panel.contentView.leadingAnchor constant:48.0],
+        [urlLabel.trailingAnchor constraintEqualToAnchor:panel.contentView.trailingAnchor constant:-48.0],
+
+        [footer.topAnchor constraintEqualToAnchor:urlLabel.bottomAnchor constant:32.0],
+        [footer.leadingAnchor constraintEqualToAnchor:panel.contentView.leadingAnchor constant:48.0],
+        [footer.trailingAnchor constraintEqualToAnchor:panel.contentView.trailingAnchor constant:-48.0],
+        [footer.bottomAnchor constraintEqualToAnchor:panel.contentView.bottomAnchor constant:-44.0],
+    ]];
+}
+
+- (void)pressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
+    UIPress *press = presses.anyObject;
+    if (press != nil && (press.type == UIPressTypeMenu || press.type == UIPressTypeSelect || press.type == UIPressTypePlayPause)) {
+        [self dismissViewControllerAnimated:YES completion:nil];
+        return;
+    }
+    [super pressesEnded:presses withEvent:event];
+}
+
+@end
+
 @interface ViewController () <BrowserMenuCoordinatorHost, BrowserPageActionCoordinatorHost, BrowserRemoteInputControllerHost, BrowserTabCoordinatorHost, BrowserTabOverviewControllerHost, BrowserTopBarViewDelegate, BrowserVideoPlaybackCoordinatorHost>
 
 @property (nonatomic) BrowserDOMInteractionService *domInteractionService;
@@ -296,10 +393,31 @@ static UIColor *kTextColor(void) {
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
     [self.tabCoordinator webViewDidAppear];
-    if (!self.preferencesStore.dontShowHintsOnLaunch && !self.displayedHintsOnLaunch) {
-        [self showHintsAlert];
+    // Run launch promos once per process: the usage guide takes priority; if it's
+    // not showing, occasionally surface the support screen.
+    if (!self.displayedHintsOnLaunch) {
+        self.displayedHintsOnLaunch = YES;
+        if (!self.preferencesStore.dontShowHintsOnLaunch) {
+            [self showHintsAlert];
+        } else {
+            [self maybeShowDonateOnLaunch];
+        }
     }
-    self.displayedHintsOnLaunch = YES;
+}
+
+// Show the support screen every 10th launch (counter persisted), so it nudges
+// without being annoying.
+- (void)maybeShowDonateOnLaunch {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSInteger count = [defaults integerForKey:@"NebulaLaunchCount"] + 1;
+    [defaults setInteger:count forKey:@"NebulaLaunchCount"];
+    if (count % 10 == 0) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (self.presentedViewController == nil) {
+                [self showDonateScreen];
+            }
+        });
+    }
 }
 
 - (void)viewDidDisappear:(BOOL)animated {
@@ -731,6 +849,20 @@ static UIColor *kTextColor(void) {
 
 - (void)browserShowHints {
     [self showHintsAlert];
+}
+
+- (void)browserShowDonate {
+    [self showDonateScreen];
+}
+
+- (void)showDonateScreen {
+    if ([self.presentedViewController isKindOfClass:[BrowserDonateViewController class]]) {
+        return;
+    }
+    BrowserDonateViewController *donateViewController = [[BrowserDonateViewController alloc] init];
+    donateViewController.modalPresentationStyle = UIModalPresentationOverFullScreen;
+    donateViewController.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
+    [self presentViewController:donateViewController animated:YES completion:nil];
 }
 
 - (void)browserShowTabOverview {

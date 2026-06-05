@@ -14,6 +14,7 @@
 - (void)browserPresentViewController:(UIViewController *)viewController;
 - (void)browserLoadHomePage;
 - (void)browserShowHints;
+- (void)browserShowDonate;
 - (void)browserShowTabOverview;
 - (void)browserCreateNewTabLoadingHomePage:(BOOL)loadHomePage;
 - (void)browserHideTopNav;
