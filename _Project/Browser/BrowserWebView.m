@@ -333,6 +333,8 @@ static void BrowserSetBooleanSelectorIfAvailable(id object, NSString *selectorNa
     }
 }
 
+static void BrowserEnableMediaFeatureFlags(id preferences);
+
 static void BrowserConfigurePrivateMediaPreferences(id configuration) {
     if (configuration == nil) {
         return;
@@ -352,6 +354,54 @@ static void BrowserConfigurePrivateMediaPreferences(id configuration) {
     BrowserSetBooleanSelectorIfAvailable(preferences, @"_setManagedMediaSourceEnabled:", YES);
     BrowserSetBooleanSelectorIfAvailable(preferences, @"_setMediaCapabilityGrantsEnabled:", YES);
     BrowserSetBooleanSelectorIfAvailable(preferences, @"_setVideoQualityIncludesDisplayCompositingEnabled:", YES);
+
+    // On modern WebKit (tvOS 26), MSE/MMS is gated behind WKFeature flags rather
+    // than the legacy _setMediaSourceEnabled: setter. Enable any feature whose key
+    // mentions MediaSource so sites that feed <video> via MSE can play.
+    BrowserEnableMediaFeatureFlags(preferences);
+}
+
+static void BrowserEnableMatchingFeatures(id preferences, NSArray *features) {
+    if (![features isKindOfClass:[NSArray class]]) {
+        return;
+    }
+    SEL setEnabledForFeature = NSSelectorFromString(@"_setEnabled:forFeature:");
+    if (![preferences respondsToSelector:setEnabledForFeature]) {
+        return;
+    }
+    SEL keySelector = NSSelectorFromString(@"key");
+    for (id feature in features) {
+        if (![feature respondsToSelector:keySelector]) {
+            continue;
+        }
+        NSString *key = ((id (*)(id, SEL))objc_msgSend)(feature, keySelector);
+        if (![key isKindOfClass:[NSString class]]) {
+            continue;
+        }
+        NSString *lowercaseKey = key.lowercaseString;
+        // Media playback features that sites commonly require.
+        if ([lowercaseKey containsString:@"mediasource"] ||
+            [lowercaseKey containsString:@"managedmediasource"] ||
+            [lowercaseKey containsString:@"sourcebuffer"]) {
+            ((void (*)(id, SEL, BOOL, id))objc_msgSend)(preferences, setEnabledForFeature, YES, feature);
+        }
+    }
+}
+
+static void BrowserEnableMediaFeatureFlags(id preferences) {
+    Class preferencesClass = NSClassFromString(@"WKPreferences");
+    if (preferencesClass == Nil) {
+        return;
+    }
+    // Experimental and internal feature catalogs are class methods on WKPreferences.
+    SEL experimentalSelector = NSSelectorFromString(@"_experimentalFeatures");
+    if ([preferencesClass respondsToSelector:experimentalSelector]) {
+        BrowserEnableMatchingFeatures(preferences, ((id (*)(id, SEL))objc_msgSend)((id)preferencesClass, experimentalSelector));
+    }
+    SEL internalSelector = NSSelectorFromString(@"_internalDebugFeatures");
+    if ([preferencesClass respondsToSelector:internalSelector]) {
+        BrowserEnableMatchingFeatures(preferences, ((id (*)(id, SEL))objc_msgSend)((id)preferencesClass, internalSelector));
+    }
 }
 
 static NSString *BrowserYouTubeRequestCaptureScript(void) {
@@ -736,6 +786,13 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
     SEL allowsInlineMediaPlaybackSelector = NSSelectorFromString(@"setAllowsInlineMediaPlayback:");
     if (configuration != nil && [configuration respondsToSelector:allowsInlineMediaPlaybackSelector]) {
         ((void (*)(id, SEL, BOOL))objc_msgSend)(configuration, allowsInlineMediaPlaybackSelector, allowsInlineMediaPlayback);
+    }
+    // Synthetic clicks (cursor mode) don't carry user activation, so a page's
+    // play button calling video.play() would be blocked. Drop the user-action
+    // requirement so taps on play overlays actually start playback.
+    SEL mediaTypesSelector = NSSelectorFromString(@"setMediaTypesRequiringUserActionForPlayback:");
+    if (configuration != nil && [configuration respondsToSelector:mediaTypesSelector]) {
+        ((void (*)(id, SEL, NSUInteger))objc_msgSend)(configuration, mediaTypesSelector, 0); // WKAudiovisualMediaTypeNone
     }
     BrowserConfigurePrivateMediaPreferences(configuration);
     BrowserInstallYouTubeCaptureUserScript(configuration);
