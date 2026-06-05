@@ -4,6 +4,8 @@
 
 @interface BrowserViewModel : NSObject
 
++ (NSUInteger)maximumTabCount;
+
 @property (nonatomic, strong, readonly) NSMutableArray *tabs;
 @property (nonatomic) NSInteger activeTabIndex;
 @property (nonatomic) BOOL topNavigationBarVisible;

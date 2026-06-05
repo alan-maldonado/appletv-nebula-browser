@@ -27,6 +27,10 @@ static NSUInteger const kMaximumTabCount = 5;
     return self.tabs[self.activeTabIndex];
 }
 
++ (NSUInteger)maximumTabCount {
+    return kMaximumTabCount;
+}
+
 - (BrowserTabViewModel *)addTab {
     if (self.tabs.count >= kMaximumTabCount) {
         return nil;

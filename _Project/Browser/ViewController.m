@@ -747,6 +747,10 @@ static UIColor *kTextColor(void) {
     [self browserPresentViewController:viewController];
 }
 
+- (void)browserTabCoordinatorShowTabOverview {
+    [self browserShowTabOverview];
+}
+
 - (void)browserTabCoordinatorUpdateTextFontSize {
     [self updateTextFontSize];
 }

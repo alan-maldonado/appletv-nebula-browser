@@ -449,10 +449,18 @@ static CGFloat const kThumbnailStagingOffset = 4096.0;
 }
 
 - (void)showMaxTabsAlert {
-    UIAlertController *alertController = [UIAlertController alertControllerWithTitle:@"Maximum Tabs Reached"
-                                                                             message:@"This build keeps up to five tabs open at once."
+    NSUInteger maxTabs = [BrowserViewModel maximumTabCount];
+    NSString *message = [NSString stringWithFormat:@"You already have %lu tabs open — the most Nebula keeps at once.\n\nOpen your tabs to close one you no longer need, then try again.",
+                         (unsigned long)maxTabs];
+    UIAlertController *alertController = [UIAlertController alertControllerWithTitle:@"You're at the tab limit"
+                                                                             message:message
                                                                       preferredStyle:UIAlertControllerStyleAlert];
-    [alertController addAction:[UIAlertAction actionWithTitle:@"Dismiss"
+    [alertController addAction:[UIAlertAction actionWithTitle:@"Show Tabs"
+                                                        style:UIAlertActionStyleDefault
+                                                      handler:^(__unused UIAlertAction *action) {
+        [self.host browserTabCoordinatorShowTabOverview];
+    }]];
+    [alertController addAction:[UIAlertAction actionWithTitle:@"Not Now"
                                                         style:UIAlertActionStyleCancel
                                                       handler:nil]];
     [self.host browserTabCoordinatorPresentViewController:alertController];

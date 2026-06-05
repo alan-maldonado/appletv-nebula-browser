@@ -14,6 +14,7 @@ NS_ASSUME_NONNULL_BEGIN
 @protocol BrowserTabCoordinatorHost <NSObject>
 
 - (void)browserTabCoordinatorPresentViewController:(UIViewController *)viewController;
+- (void)browserTabCoordinatorShowTabOverview;
 - (void)browserTabCoordinatorUpdateTextFontSize;
 - (BOOL)browserTabCoordinatorIsCursorModeEnabled;
 - (BOOL)browserTabCoordinatorIsTabOverviewVisible;
