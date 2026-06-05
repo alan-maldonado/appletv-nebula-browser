@@ -246,6 +246,17 @@ static CGFloat const kThumbnailStagingOffset = 4096.0;
     [self refreshActiveTabUI];
 }
 
+// Ignore any saved session and open a fresh tab on the home page (used when the
+// launch preference is "Home Page" or when tabs are closed on exit).
+- (void)startFreshLoadingHomePage {
+    self.topMenuView.hidden = !self.viewModel.topNavigationBarVisible;
+    [self createNewTabLoadingHomePage:YES];
+}
+
+- (void)clearSavedSession {
+    [self.sessionStore clearSavedSession];
+}
+
 - (void)webViewDidAppear {
     NSURLRequest *savedReopenRequest = [self.sessionStore consumeSavedURLToReopenRequestWithNavigationService:self.navigationService];
     if (savedReopenRequest != nil) {

@@ -68,6 +68,11 @@ static NSNumber *BrowserSessionVersion(void) {
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
+- (void)clearSavedSession {
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:kBrowserSessionDefaultsKey];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
 - (NSDictionary *)restoredSessionRepresentation {
     NSDictionary *defaultsRepresentation = [[NSUserDefaults standardUserDefaults] objectForKey:kBrowserSessionDefaultsKey];
     if ([defaultsRepresentation isKindOfClass:[NSDictionary class]]) {

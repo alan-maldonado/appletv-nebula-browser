@@ -44,6 +44,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)init NS_UNAVAILABLE;
 
 - (void)restoreInitialStateOrCreateFirstTab;
+- (void)startFreshLoadingHomePage;
+- (void)clearSavedSession;
 - (void)webViewDidAppear;
 - (void)loadHomePage;
 - (void)createNewTabLoadingHomePage:(BOOL)loadHomePage;

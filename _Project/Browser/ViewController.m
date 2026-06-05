@@ -206,6 +206,7 @@ static UIColor *kTextColor(void) {
 // Double-back-to-exit: timestamp of the last Menu press at the root of history.
 @property (nonatomic) CFAbsoluteTime lastExitBackPressTimestamp;
 @property (nonatomic) UILabel *exitHintLabel;
+@property (nonatomic) UIView *privacyCoverView;
 @property (nonatomic) NSLayoutConstraint *exitHintWidthConstraint;
 
 @end
@@ -279,8 +280,17 @@ static UIColor *kTextColor(void) {
                                              selector:@selector(handleGlobalSelectPressEndedNotification:)
                                                  name:kBrowserGlobalSelectPressEndedNotification
                                                object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleApplicationDidBecomeActive:)
+                                                 name:UIApplicationDidBecomeActiveNotification
+                                               object:nil];
 
-    [self.tabCoordinator restoreInitialStateOrCreateFirstTab];
+    // Launch page preference: "Home Page" starts fresh; otherwise restore the last session.
+    if (self.preferencesStore.launchPageMode == 1) {
+        [self.tabCoordinator startFreshLoadingHomePage];
+    } else {
+        [self.tabCoordinator restoreInitialStateOrCreateFirstTab];
+    }
 }
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -304,17 +314,66 @@ static UIColor *kTextColor(void) {
 
 - (void)handleApplicationWillResignActive:(NSNotification *)notification {
     (void)notification;
-    [self.tabCoordinator persistSession];
+    [self applyExitPrivacyActions];
+    [self showPrivacyCoverIfNeeded];
 }
 
 - (void)handleApplicationDidEnterBackground:(NSNotification *)notification {
     (void)notification;
-    [self.tabCoordinator persistSession];
+    [self applyExitPrivacyActions];
+    [self showPrivacyCoverIfNeeded];
 }
 
 - (void)handleApplicationWillTerminate:(NSNotification *)notification {
     (void)notification;
+    [self applyExitPrivacyActions];
+}
+
+- (void)handleApplicationDidBecomeActive:(NSNotification *)notification {
+    (void)notification;
+    [self hidePrivacyCover];
+}
+
+// Persist or wipe browsing state when leaving the app, per privacy preferences.
+- (void)applyExitPrivacyActions {
+    if (self.preferencesStore.clearHistoryOnExit) {
+        [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"HISTORY"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    }
     [self.tabCoordinator persistSession];
+}
+
+// Privacy mode: cover the page so it isn't shown in the tvOS app switcher snapshot.
+- (void)showPrivacyCoverIfNeeded {
+    if (!self.preferencesStore.privacyModeEnabled) {
+        return;
+    }
+    if (self.privacyCoverView == nil) {
+        UIView *cover = [[UIView alloc] initWithFrame:self.view.bounds];
+        cover.backgroundColor = UIColor.blackColor;
+        cover.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        cover.layer.zPosition = 100000.0;
+
+        UIImageView *logo = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"ThemePreview-Classic"] ?: nil];
+        logo.contentMode = UIViewContentModeScaleAspectFit;
+        logo.translatesAutoresizingMaskIntoConstraints = NO;
+        logo.alpha = 0.5;
+        [cover addSubview:logo];
+        [NSLayoutConstraint activateConstraints:@[
+            [logo.centerXAnchor constraintEqualToAnchor:cover.centerXAnchor],
+            [logo.centerYAnchor constraintEqualToAnchor:cover.centerYAnchor],
+            [logo.widthAnchor constraintEqualToConstant:480.0],
+            [logo.heightAnchor constraintEqualToConstant:288.0],
+        ]];
+        self.privacyCoverView = cover;
+    }
+    self.privacyCoverView.frame = self.view.bounds;
+    [self.view addSubview:self.privacyCoverView];
+    [self.view bringSubviewToFront:self.privacyCoverView];
+}
+
+- (void)hidePrivacyCover {
+    [self.privacyCoverView removeFromSuperview];
 }
 
 - (void)handleGlobalSelectPressEndedNotification:(NSNotification *)notification {

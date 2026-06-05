@@ -63,6 +63,8 @@ typedef NSString * _Nullable (^BrowserAdvancedMenuItemAdjustHandler)(NSInteger d
 // Optional: name of an image to preview beside the menu while this row is
 // focused (re-queried after every adjustment).
 @property (nonatomic, copy) NSString * _Nullable (^previewImageNameProvider)(void);
+// Optional: explanatory text shown beside the menu while this row is focused.
+@property (nonatomic, copy) NSString *explanation;
 
 + (instancetype)itemWithTitle:(NSString *)title
                         style:(UIAlertActionStyle)style
@@ -126,6 +128,8 @@ typedef NSString * _Nullable (^BrowserAdvancedMenuItemAdjustHandler)(NSInteger d
 @property (nonatomic) BOOL dismissalInProgress;
 @property (nonatomic) BOOL usingNativeGlassEffect;
 @property (nonatomic) UIImageView *previewImageView;
+@property (nonatomic) UIVisualEffectView *explanationCardView;
+@property (nonatomic) UILabel *explanationLabel;
 
 @end
 
@@ -445,6 +449,8 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
         item = self.sections[(NSUInteger)indexPath.section].items[(NSUInteger)indexPath.row];
     }
 
+    [self updateExplanationForItem:item];
+
     NSString *imageName = item.previewImageNameProvider != nil ? item.previewImageNameProvider() : nil;
     UIImage *previewImage = imageName.length > 0 ? [UIImage imageNamed:imageName] : nil;
     if (previewImage == nil) {
@@ -476,6 +482,85 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
     self.previewImageView.image = previewImage;
     [UIView animateWithDuration:0.2 animations:^{
         self.previewImageView.alpha = 1.0;
+    }];
+}
+
+// Explanatory card (left of the menu) for rows that carry an explanation.
+- (void)updateExplanationForItem:(BrowserAdvancedMenuItem *)item {
+    NSString *text = item.explanation;
+    if (text.length == 0) {
+        [UIView animateWithDuration:0.2 animations:^{
+            self.explanationCardView.alpha = 0.0;
+        }];
+        return;
+    }
+
+    if (self.explanationCardView == nil) {
+        UIVisualEffectView *card = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleDark]];
+        card.translatesAutoresizingMaskIntoConstraints = NO;
+        card.layer.cornerRadius = 24.0;
+        card.layer.masksToBounds = YES;
+        card.alpha = 0.0;
+        [self.view insertSubview:card belowSubview:self.panelView];
+
+        UIView *tint = [[UIView alloc] init];
+        tint.translatesAutoresizingMaskIntoConstraints = NO;
+        tint.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.35];
+        [card.contentView addSubview:tint];
+
+        // Theme-colored accent bar down the left edge.
+        UIView *accentBar = [[UIView alloc] init];
+        accentBar.translatesAutoresizingMaskIntoConstraints = NO;
+        accentBar.backgroundColor = [[BrowserPreferencesStore new] themeAccentColor];
+        [card.contentView addSubview:accentBar];
+
+        UILabel *heading = [[UILabel alloc] init];
+        heading.translatesAutoresizingMaskIntoConstraints = NO;
+        heading.text = @"ABOUT THIS SETTING";
+        heading.font = [UIFont systemFontOfSize:19.0 weight:UIFontWeightSemibold];
+        heading.textColor = [[BrowserPreferencesStore new] themeAccentColor];
+        [card.contentView addSubview:heading];
+
+        UILabel *label = [[UILabel alloc] init];
+        label.numberOfLines = 0;
+        label.font = [UIFont systemFontOfSize:27.0 weight:UIFontWeightRegular];
+        label.textColor = [UIColor colorWithWhite:1.0 alpha:0.92];
+        label.translatesAutoresizingMaskIntoConstraints = NO;
+        [card.contentView addSubview:label];
+
+        [NSLayoutConstraint activateConstraints:@[
+            [tint.topAnchor constraintEqualToAnchor:card.contentView.topAnchor],
+            [tint.bottomAnchor constraintEqualToAnchor:card.contentView.bottomAnchor],
+            [tint.leadingAnchor constraintEqualToAnchor:card.contentView.leadingAnchor],
+            [tint.trailingAnchor constraintEqualToAnchor:card.contentView.trailingAnchor],
+
+            [accentBar.topAnchor constraintEqualToAnchor:card.contentView.topAnchor],
+            [accentBar.bottomAnchor constraintEqualToAnchor:card.contentView.bottomAnchor],
+            [accentBar.leadingAnchor constraintEqualToAnchor:card.contentView.leadingAnchor],
+            [accentBar.widthAnchor constraintEqualToConstant:6.0],
+
+            [heading.topAnchor constraintEqualToAnchor:card.contentView.topAnchor constant:34.0],
+            [heading.leadingAnchor constraintEqualToAnchor:card.contentView.leadingAnchor constant:36.0],
+            [heading.trailingAnchor constraintEqualToAnchor:card.contentView.trailingAnchor constant:-32.0],
+
+            [label.topAnchor constraintEqualToAnchor:heading.bottomAnchor constant:16.0],
+            [label.leadingAnchor constraintEqualToAnchor:card.contentView.leadingAnchor constant:36.0],
+            [label.trailingAnchor constraintEqualToAnchor:card.contentView.trailingAnchor constant:-32.0],
+            [label.bottomAnchor constraintEqualToAnchor:card.contentView.bottomAnchor constant:-34.0],
+        ]];
+
+        [NSLayoutConstraint activateConstraints:@[
+            [card.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor],
+            [card.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor constant:90.0],
+            [card.widthAnchor constraintEqualToConstant:600.0],
+        ]];
+        self.explanationCardView = card;
+        self.explanationLabel = label;
+    }
+
+    self.explanationLabel.text = text;
+    [UIView animateWithDuration:0.2 animations:^{
+        self.explanationCardView.alpha = 1.0;
     }];
 }
 
@@ -1035,6 +1120,7 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
         }
         return titleForState(self.host.browserTopMenuShowing);
     };
+    item.explanation = @"Show or hide the toolbar at the top of the screen (back, tabs, address bar). When hidden, open this menu by double-tapping Play/Pause.";
     return item;
 }
 
@@ -1120,6 +1206,7 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
         preferencesStore.searchEngineIndex = (NSUInteger)nextIndex;
         return titleForEngine();
     };
+    item.explanation = @"Which search engine to use when you type words instead of a web address in the address bar.";
     return item;
 }
 
@@ -1244,6 +1331,7 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
         self.host.browserFullscreenVideoPlaybackEnabled = next;
         return titleForState(next);
     };
+    item.explanation = @"When On, tapping a video opens it in the built-in full screen player (with its own controls). When Off, videos play inline on the page — double-tap a video to go full screen.";
     return item;
 }
 
@@ -1262,6 +1350,7 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
         preferencesStore.videoHUDShowsTotalDuration = next;
         return titleForState(next);
     };
+    item.explanation = @"What the right side of the video progress bar shows: the time remaining (e.g. -3:20) or the video's total duration (e.g. 12:45).";
     return item;
 }
 
@@ -1280,6 +1369,7 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
         preferencesStore.arrowDoubleTapShortcutsEnabled = next;
         return titleForState(next);
     };
+    item.explanation = @"Double-press a direction to jump:\n\n• Up — Tabs\n• Down — Favorites\n• Left — History\n• Right — New Tab\n\nTurn off if you only want the arrows to scroll.";
     return item;
 }
 
@@ -1299,6 +1389,58 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
         [self.host browserUpdateTextFontSize];
         return titleForValue(self.host.browserTextFontSize);
     };
+    return item;
+}
+
+#pragma mark - Privacy menu items
+
+- (BrowserAdvancedMenuItem *)launchPageMenuItem {
+    BrowserPreferencesStore *preferencesStore = self.preferencesStore;
+    NSString *(^titleForMode)(void) = ^NSString * {
+        return [NSString stringWithFormat:@"On Launch: %@", preferencesStore.launchPageModeName];
+    };
+    BrowserAdvancedMenuItem *item = [self advancedMenuItemWithTitle:titleForMode()
+                                                              style:UIAlertActionStyleDefault
+                                                            handler:nil];
+    item.adjustHandler = ^NSString *(__unused NSInteger direction) {
+        preferencesStore.launchPageMode = preferencesStore.launchPageMode == 1 ? 0 : 1;
+        return titleForMode();
+    };
+    item.explanation = @"What to open when you launch the browser:\n\n• Last Session — reopen the tabs you had open.\n• Home Page — start fresh on your home page.";
+    return item;
+}
+
+- (BrowserAdvancedMenuItem *)clearHistoryOnExitMenuItem {
+    BrowserPreferencesStore *preferencesStore = self.preferencesStore;
+    NSString *(^titleForState)(BOOL) = ^NSString *(BOOL on) {
+        return on ? @"Clear History On Exit: On" : @"Clear History On Exit: Off";
+    };
+    BrowserAdvancedMenuItem *item = [self advancedMenuItemWithTitle:titleForState(preferencesStore.clearHistoryOnExit)
+                                                              style:UIAlertActionStyleDefault
+                                                            handler:nil];
+    item.adjustHandler = ^NSString *(__unused NSInteger direction) {
+        BOOL next = !preferencesStore.clearHistoryOnExit;
+        preferencesStore.clearHistoryOnExit = next;
+        return titleForState(next);
+    };
+    item.explanation = @"When you close the app, erase your browsing history automatically. Favorites and settings are kept.";
+    return item;
+}
+
+- (BrowserAdvancedMenuItem *)privacyModeMenuItem {
+    BrowserPreferencesStore *preferencesStore = self.preferencesStore;
+    NSString *(^titleForState)(BOOL) = ^NSString *(BOOL on) {
+        return on ? @"Privacy Mode: On" : @"Privacy Mode: Off";
+    };
+    BrowserAdvancedMenuItem *item = [self advancedMenuItemWithTitle:titleForState(preferencesStore.privacyModeEnabled)
+                                                              style:UIAlertActionStyleDefault
+                                                            handler:nil];
+    item.adjustHandler = ^NSString *(__unused NSInteger direction) {
+        BOOL next = !preferencesStore.privacyModeEnabled;
+        preferencesStore.privacyModeEnabled = next;
+        return titleForState(next);
+    };
+    item.explanation = @"Hide the page when you switch between Apple TV apps, so your browsing isn't shown in the app switcher preview.";
     return item;
 }
 
@@ -1350,6 +1492,12 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
         [BrowserAdvancedMenuSection sectionWithTitle:@"Search"
                                                items:@[
             [self searchEngineMenuItem],
+        ]],
+        [BrowserAdvancedMenuSection sectionWithTitle:@"Privacy"
+                                               items:@[
+            [self launchPageMenuItem],
+            [self clearHistoryOnExitMenuItem],
+            [self privacyModeMenuItem],
         ]],
         [BrowserAdvancedMenuSection sectionWithTitle:@"Compatibility"
                                                items:@[

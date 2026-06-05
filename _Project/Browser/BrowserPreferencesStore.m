@@ -13,6 +13,9 @@ static NSString * const kSearchEngineIndexDefaultsKey = @"SearchEngineIndex";
 static NSString * const kScalePagesToFitDefaultsKey = @"ScalePagesToFit";
 static NSString * const kDontShowHintsOnLaunchDefaultsKey = @"DontShowHintsOnLaunch";
 static NSString * const kHomepageDefaultsKey = @"homepage";
+static NSString * const kLaunchPageModeDefaultsKey = @"LaunchPageMode";
+static NSString * const kClearHistoryOnExitDefaultsKey = @"ClearHistoryOnExit";
+static NSString * const kPrivacyModeEnabledDefaultsKey = @"PrivacyModeEnabled";
 
 static NSUInteger const kDefaultTextFontSize = 100;
 static NSUInteger const kMinimumTextFontSize = 50;
@@ -246,6 +249,40 @@ static NSArray<NSDictionary<NSString *, NSString *> *> *BrowserSearchEngines(voi
 
 - (void)setHomePageURLString:(NSString *)homePageURLString {
     [[self defaults] setObject:homePageURLString ?: @"" forKey:kHomepageDefaultsKey];
+    [[self defaults] synchronize];
+}
+
+#pragma mark - Privacy
+
+- (NSUInteger)launchPageMode {
+    NSInteger mode = [[self defaults] integerForKey:kLaunchPageModeDefaultsKey];
+    return (mode == 1) ? 1 : 0;
+}
+
+- (void)setLaunchPageMode:(NSUInteger)launchPageMode {
+    [[self defaults] setInteger:(launchPageMode == 1 ? 1 : 0) forKey:kLaunchPageModeDefaultsKey];
+    [[self defaults] synchronize];
+}
+
+- (NSString *)launchPageModeName {
+    return self.launchPageMode == 1 ? @"Home Page" : @"Last Session";
+}
+
+- (BOOL)clearHistoryOnExit {
+    return [[self defaults] boolForKey:kClearHistoryOnExitDefaultsKey];
+}
+
+- (void)setClearHistoryOnExit:(BOOL)clearHistoryOnExit {
+    [[self defaults] setBool:clearHistoryOnExit forKey:kClearHistoryOnExitDefaultsKey];
+    [[self defaults] synchronize];
+}
+
+- (BOOL)privacyModeEnabled {
+    return [[self defaults] boolForKey:kPrivacyModeEnabledDefaultsKey];
+}
+
+- (void)setPrivacyModeEnabled:(BOOL)privacyModeEnabled {
+    [[self defaults] setBool:privacyModeEnabled forKey:kPrivacyModeEnabledDefaultsKey];
     [[self defaults] synchronize];
 }
 

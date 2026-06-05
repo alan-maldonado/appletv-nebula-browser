@@ -37,6 +37,15 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) BOOL dontShowHintsOnLaunch;
 @property (nonatomic, copy) NSString *homePageURLString;
 
+// Privacy.
+// What to show on launch: 0 = restore last session (default), 1 = home page.
+@property (nonatomic) NSUInteger launchPageMode;
+@property (nonatomic, readonly) NSString *launchPageModeName;
+// Clear browsing history when the app is backgrounded/closed. Default NO.
+@property (nonatomic) BOOL clearHistoryOnExit;
+// Privacy mode: hide page content in the tvOS app switcher snapshot. Default NO.
+@property (nonatomic) BOOL privacyModeEnabled;
+
 - (void)ensureUserAgentConsistency;
 
 @end
