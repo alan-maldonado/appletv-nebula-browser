@@ -83,26 +83,91 @@ static BOOL const kBrowserYouTubeNativeExtractionEnabled = NO;
     }
 
     NSURL *pageURL = self.host.browserWebView.request.URL;
-    CGPoint point = self.host.browserDOMCursorPoint;
-    NSDictionary *videoInfo = [self.domInteractionService videoInfoAtDOMPoint:point
-                                                                       webView:self.host.browserWebView];
-    if (kBrowserYouTubeNativeExtractionEnabled && [[self youTubeExtractor] canExtractFromPageURL:pageURL]) {
-        [self playYouTubeVideoAtPageURL:pageURL fallbackVideoInfo:videoInfo];
+    [self.host browserResolveDOMCursorPointWithCompletion:^(CGPoint point) {
+        BrowserWebView *webView = self.host.browserWebView;
+        [self.domInteractionService videoInfoAtDOMPoint:point webView:webView completion:^(NSDictionary *videoInfo) {
+            if (kBrowserYouTubeNativeExtractionEnabled && [[self youTubeExtractor] canExtractFromPageURL:pageURL]) {
+                [self playYouTubeVideoAtPageURL:pageURL fallbackVideoInfo:videoInfo];
+                return;
+            }
+
+            NSString *videoURLString = [self nativePlayableURLStringFromVideoInfo:videoInfo];
+            if ([self isNativePlayableVideoURLString:videoURLString]) {
+                [self presentNativeVideoPlayerOrUnsupportedAlertForVideoInfo:videoInfo];
+                return;
+            }
+
+            [self.domInteractionService isVideoActivationTargetAtDOMPoint:point webView:webView completion:^(BOOL isActivationTarget) {
+                if (!isActivationTarget) {
+                    [self presentNativeVideoPlayerOrUnsupportedAlertForVideoInfo:videoInfo];
+                    return;
+                }
+                [self.domInteractionService activateVideoTargetAtDOMPoint:point webView:webView timeout:1.5 completion:^(NSDictionary *activatedVideoInfo) {
+                    [self presentNativeVideoPlayerOrUnsupportedAlertForVideoInfo:activatedVideoInfo.count > 0 ? activatedVideoInfo : videoInfo];
+                }];
+            }];
+        }];
+    }];
+}
+
+- (void)handleSelectPressForVideoAtDOMPoint:(CGPoint)point completion:(void (^)(BOOL handled))completion {
+    if (![self isFullscreenVideoPlaybackEnabled]) {
+        completion(NO);
         return;
     }
 
-    NSString *videoURLString = [self nativePlayableURLStringFromVideoInfo:videoInfo];
-    if (![self isNativePlayableVideoURLString:videoURLString] &&
-        [self.domInteractionService isVideoActivationTargetAtDOMPoint:point webView:self.host.browserWebView]) {
-        NSDictionary *activatedVideoInfo = [self.domInteractionService activateVideoTargetAtDOMPoint:point
-                                                                                              webView:self.host.browserWebView
-                                                                                              timeout:1.5];
-        if (activatedVideoInfo.count > 0) {
-            videoInfo = activatedVideoInfo;
-            videoURLString = [self nativePlayableURLStringFromVideoInfo:videoInfo];
+    BrowserWebView *webView = self.host.browserWebView;
+    [self.domInteractionService isVideoDismissTargetAtDOMPoint:point webView:webView completion:^(BOOL isDismissTarget) {
+        if (isDismissTarget) {
+            completion(NO);
+            return;
         }
-    }
 
+        [self.domInteractionService directVideoInfoAtDOMPoint:point webView:webView completion:^(NSDictionary *directVideoInfo) {
+            NSString *directVideoURLString = [self nativePlayableURLStringFromVideoInfo:directVideoInfo];
+            if ([self isNativePlayableVideoURLString:directVideoURLString]) {
+                [self presentNativeVideoPlayerOrUnsupportedAlertForVideoInfo:directVideoInfo];
+                completion(YES);
+                return;
+            }
+
+            [self.domInteractionService isVideoActivationTargetAtDOMPoint:point webView:webView completion:^(BOOL isActivationTarget) {
+                if (!isActivationTarget) {
+                    completion(NO);
+                    return;
+                }
+                // From here the press is a video interaction: report it handled right
+                // away so the page click is skipped, and resolve the source in the background.
+                completion(YES);
+                [self resolveActivatedVideoAtDOMPoint:point webView:webView];
+            }];
+        }];
+    }];
+}
+
+- (void)resolveActivatedVideoAtDOMPoint:(CGPoint)point webView:(BrowserWebView *)webView {
+    [self.domInteractionService primedVideoInfoAtDOMPoint:point webView:webView completion:^(NSDictionary *primedVideoInfo) {
+        void (^continueWithVideoInfo)(NSDictionary *) = ^(NSDictionary *videoInfo) {
+            NSString *videoURLString = [self nativePlayableURLStringFromVideoInfo:videoInfo];
+            if ([self isNativePlayableVideoURLString:videoURLString]) {
+                [self presentNativeVideoPlayerOrUnsupportedAlertForVideoInfo:videoInfo];
+                return;
+            }
+            [self.domInteractionService activateVideoTargetAtDOMPoint:point webView:webView timeout:1.5 completion:^(NSDictionary *activatedVideoInfo) {
+                [self presentNativeVideoPlayerOrUnsupportedAlertForVideoInfo:activatedVideoInfo.count > 0 ? activatedVideoInfo : videoInfo];
+            }];
+        };
+
+        if (primedVideoInfo.count > 0) {
+            continueWithVideoInfo(primedVideoInfo);
+            return;
+        }
+        [self.domInteractionService videoInfoAtDOMPoint:point webView:webView completion:continueWithVideoInfo];
+    }];
+}
+
+- (void)presentNativeVideoPlayerOrUnsupportedAlertForVideoInfo:(NSDictionary *)videoInfo {
+    NSString *videoURLString = [self nativePlayableURLStringFromVideoInfo:videoInfo];
     if (![self isNativePlayableVideoURLString:videoURLString]) {
         [self presentUnsupportedNativeVideoAlertForVideoInfo:videoInfo ?: @{}];
         return;
@@ -111,56 +176,6 @@ static BOOL const kBrowserYouTubeNativeExtractionEnabled = NO;
     NSURL *videoURL = [NSURL URLWithString:videoURLString];
     NSString *title = [videoInfo[@"title"] isKindOfClass:[NSString class]] ? videoInfo[@"title"] : self.host.browserCurrentPageTitle;
     [self presentNativeVideoPlayerForURL:videoURL title:title];
-}
-
-- (BOOL)handleSelectPressForVideoAtCursor {
-    if (![self isFullscreenVideoPlaybackEnabled]) {
-        return NO;
-    }
-
-    CGPoint point = self.host.browserDOMCursorPoint;
-    if ([self.domInteractionService isVideoDismissTargetAtDOMPoint:point webView:self.host.browserWebView]) {
-        return NO;
-    }
-
-    NSDictionary *directVideoInfo = [self.domInteractionService directVideoInfoAtDOMPoint:point
-                                                                                   webView:self.host.browserWebView];
-    NSString *directVideoURLString = [self nativePlayableURLStringFromVideoInfo:directVideoInfo];
-    if ([self isNativePlayableVideoURLString:directVideoURLString]) {
-        NSURL *videoURL = [NSURL URLWithString:directVideoURLString];
-        NSString *title = [directVideoInfo[@"title"] isKindOfClass:[NSString class]] ? directVideoInfo[@"title"] : self.host.browserCurrentPageTitle;
-        [self presentNativeVideoPlayerForURL:videoURL title:title];
-        return YES;
-    }
-
-    if (![self.domInteractionService isVideoActivationTargetAtDOMPoint:point webView:self.host.browserWebView]) {
-        return NO;
-    }
-
-    NSDictionary *videoInfo = [self.domInteractionService primedVideoInfoAtDOMPoint:point webView:self.host.browserWebView];
-    if (videoInfo.count == 0) {
-        videoInfo = [self.domInteractionService videoInfoAtDOMPoint:point webView:self.host.browserWebView];
-    }
-
-    NSString *videoURLString = [self nativePlayableURLStringFromVideoInfo:videoInfo];
-    if (![self isNativePlayableVideoURLString:videoURLString]) {
-        NSDictionary *activatedVideoInfo = [self.domInteractionService activateVideoTargetAtDOMPoint:point
-                                                                                              webView:self.host.browserWebView
-                                                                                              timeout:1.5];
-        if (activatedVideoInfo.count > 0) {
-            videoInfo = activatedVideoInfo;
-            videoURLString = [self nativePlayableURLStringFromVideoInfo:videoInfo];
-        }
-    }
-
-    if ([self isNativePlayableVideoURLString:videoURLString]) {
-        NSURL *videoURL = [NSURL URLWithString:videoURLString];
-        NSString *title = [videoInfo[@"title"] isKindOfClass:[NSString class]] ? videoInfo[@"title"] : self.host.browserCurrentPageTitle;
-        [self presentNativeVideoPlayerForURL:videoURL title:title];
-    } else {
-        [self presentUnsupportedNativeVideoAlertForVideoInfo:videoInfo ?: @{}];
-    }
-    return YES;
 }
 
 - (NSString *)nativePlayableURLStringFromVideoInfo:(NSDictionary *)videoInfo {

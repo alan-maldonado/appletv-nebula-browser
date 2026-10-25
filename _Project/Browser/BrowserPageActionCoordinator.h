@@ -25,8 +25,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (instancetype)init NS_UNAVAILABLE;
 
-- (NSString *)hoverStateAtDOMPoint:(CGPoint)point webView:(BrowserWebView *)webView;
-- (BOOL)handlePageSelectionAtDOMPoint:(CGPoint)point webView:(BrowserWebView *)webView;
+// Resolves video handling asynchronously, then falls back to the regular page click.
+- (void)handlePageSelectionAtDOMPoint:(CGPoint)point webView:(BrowserWebView *)webView;
 
 @end
 

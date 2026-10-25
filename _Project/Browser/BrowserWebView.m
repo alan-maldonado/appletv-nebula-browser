@@ -968,6 +968,21 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
     ((void (*)(id, SEL, id, id))objc_msgSend)(self.runtimeWebView, selector, script, (id)nil);
 }
 
+- (void)evaluateJavaScriptString:(NSString *)script completion:(void (^)(NSString *))completion {
+    if (script.length == 0 || self.runtimeWebView == nil) {
+        completion(nil);
+        return;
+    }
+    SEL selector = NSSelectorFromString(@"evaluateJavaScript:completionHandler:");
+    if (![self.runtimeWebView respondsToSelector:selector]) {
+        completion(nil);
+        return;
+    }
+    ((void (*)(id, SEL, id, id))objc_msgSend)(self.runtimeWebView, selector, script, ^(id result, NSError *error) {
+        completion(error != nil ? nil : BrowserStringFromJavaScriptResult(result));
+    });
+}
+
 - (void)pauseAllMediaPlayback {
     if (self.runtimeWebView == nil) {
         return;

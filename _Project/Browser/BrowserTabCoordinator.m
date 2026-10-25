@@ -660,7 +660,9 @@ static CGFloat const kThumbnailStagingOffset = 4096.0;
         [self.topMenuView.loadingSpinner stopAnimating];
     }
 
-    NSString *theTitle = [webView stringByEvaluatingJavaScriptFromString:@"document.title"];
+    // WKWebView.title mirrors document.title without a blocking JS round trip
+    // (a nested run loop inside a WebKit delegate callback).
+    NSString *theTitle = [webView title];
     NSURLRequest *request = [webView request];
     NSString *currentURL = request.URL.absoluteString ?: @"";
     [self.navigationService updateTab:tab withPageTitle:theTitle currentURLString:currentURL];

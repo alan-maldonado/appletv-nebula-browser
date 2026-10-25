@@ -10,8 +10,16 @@
 
 @interface AppDelegate : UIResponder <UIApplicationDelegate>
 
-@property (strong, nonatomic) UIWindow *window;
+- (void)restoreCookiesFromDefaults;
+- (void)saveCookiesToDefaults;
 
+@end
+
+// tvOS 27 traps at launch for apps built against its SDK without UIScene adoption.
+// The window comes from UISceneStoryboardFile in Info.plist.
+@interface SceneDelegate : UIResponder <UIWindowSceneDelegate>
+
+@property (strong, nonatomic) UIWindow *window;
 
 @end
 

@@ -17,9 +17,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)browserRemoteInputControllerDismissTabOverview;
 - (void)browserRemoteInputControllerHandleTabOverviewAlternateAction;
 - (void)browserRemoteInputControllerHandlePrimaryAction;
-// Double-tap on a video: fullscreen it. Returns YES if a video was found at the
-// cursor (so the caller skips the cursor/scroll mode toggle).
-- (BOOL)browserRemoteInputControllerFullscreenVideoAtCursor;
+// Double-tap on a video: fullscreen it. Completion (main queue) gets YES if a video was
+// found at the cursor (so the caller skips the cursor/scroll mode toggle).
+- (void)browserRemoteInputControllerFullscreenVideoAtCursorWithCompletion:(void (^)(BOOL found))completion;
 - (void)browserRemoteInputControllerShowTabOverview;
 - (void)browserRemoteInputControllerShowHistory;
 - (void)browserRemoteInputControllerShowFavorites;
@@ -27,7 +27,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)browserRemoteInputControllerHandleMenuPress;
 - (void)browserRemoteInputControllerHandlePlayPausePress;
 - (void)browserRemoteInputControllerHandleAdvancedMenuPress;
-- (NSString *)browserRemoteInputControllerHoverStateAtCursorPoint:(CGPoint)point;
+// Asynchronous: completion runs on the main queue with @"true", @"false" or @"" (unknown).
+- (void)browserRemoteInputControllerHoverStateAtCursorPoint:(CGPoint)point
+                                                 completion:(void (^)(NSString *state))completion;
 - (void)browserRemoteInputControllerSetWebInteractionEnabled:(BOOL)enabled;
 - (void)browserRemoteInputControllerPersistSession;
 

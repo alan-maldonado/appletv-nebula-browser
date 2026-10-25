@@ -38,6 +38,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable NSString *)stringByEvaluatingJavaScriptFromString:(NSString * _Nonnull)script;
 // Fire-and-forget variant: does not block the main thread; use when the result is unused.
 - (void)evaluateJavaScriptStringAsync:(NSString * _Nonnull)script;
+// Non-blocking variant that delivers the string result on the main queue. Use from
+// event-handling paths (touchesMoved, presses): the synchronous variant pumps a nested
+// run loop, and UIKit traps if it re-enters -[UIApplication sendEvent:] from there.
+- (void)evaluateJavaScriptString:(NSString * _Nonnull)script
+                      completion:(void (^ _Nonnull)(NSString * _Nullable result))completion;
 - (NSString * _Nonnull)runtimeMediaPreferenceReport;
 - (void)setUserAgent:(NSString * _Nullable)userAgent;
 - (void)pauseAllMediaPlayback;

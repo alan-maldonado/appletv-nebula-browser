@@ -7,29 +7,6 @@ static NSString * const kEditableElementSelector = @"input, textarea, select, [c
 
 @implementation BrowserDOMInteractionService
 
-- (CGPoint)DOMPointForCursorOrigin:(CGPoint)cursorOrigin
-                            inView:(UIView *)containerView
-                           webView:(BrowserWebView *)webView {
-    CGPoint point = [containerView convertPoint:cursorOrigin toView:webView];
-    if (point.y < 0.0) {
-        return point;
-    }
-
-    NSInteger displayWidth = [[webView stringByEvaluatingJavaScriptFromString:@"window.innerWidth"] integerValue];
-    if (displayWidth <= 0) {
-        return point;
-    }
-
-    CGFloat scale = CGRectGetWidth([webView frame]) / (CGFloat)displayWidth;
-    if (scale <= 0.0) {
-        return point;
-    }
-
-    point.x /= scale;
-    point.y /= scale;
-    return point;
-}
-
 - (NSString *)resolvedElementScriptForPoint:(CGPoint)point body:(NSString *)body {
     NSInteger pointX = (NSInteger)llround(point.x);
     NSInteger pointY = (NSInteger)llround(point.y);
@@ -95,6 +72,21 @@ static NSString * const kEditableElementSelector = @"input, textarea, select, [c
     return [webView stringByEvaluatingJavaScriptFromString:script] ?: @"";
 }
 
+// Non-blocking variant: completion runs on the main queue with the script result (or @"").
+- (void)evaluateResolvedElementJavaScriptAtPoint:(CGPoint)point
+                                         webView:(BrowserWebView *)webView
+                                            body:(NSString *)body
+                                      completion:(void (^)(NSString *result))completion {
+    if (webView == nil) {
+        completion(@"");
+        return;
+    }
+    NSString *script = [self resolvedElementScriptForPoint:point body:body];
+    [webView evaluateJavaScriptString:script completion:^(NSString *result) {
+        completion(result ?: @"");
+    }];
+}
+
 // Fire-and-forget: runs the resolved-element script without blocking. For pure
 // side effects (e.g. dispatching synthetic click events) where the result is unused.
 - (void)dispatchResolvedElementJavaScriptAtPoint:(CGPoint)point
@@ -145,20 +137,60 @@ static NSString * const kEditableElementSelector = @"input, textarea, select, [c
     return [self evaluateResolvedElementJavaScriptAtPoint:point webView:webView body:wrappedBody];
 }
 
-- (NSString *)evaluateHoverStateJavaScriptAtPoint:(CGPoint)point
-                                           webView:(BrowserWebView *)webView {
+- (NSString *)hoverStateJavaScriptBody {
+    return @"var candidate = interactiveElement || resolvedElement;"
+            "while (candidate) {"
+                "if (candidate.matches && candidate.matches(interactiveSelector)) { return 'true'; }"
+                "candidate = candidate.parentElement;"
+            "}"
+            "return 'false';";
+}
+
+- (void)evaluateHoverStateAtCursorOrigin:(CGPoint)cursorOrigin
+                                  inView:(UIView *)containerView
+                                 webView:(BrowserWebView *)webView
+                              completion:(void (^)(NSString *))completion {
     if (webView == nil) {
-        return @"false";
+        completion(@"false");
+        return;
     }
 
-    return [self evaluateResolvedElementJavaScriptAtPoint:point
-                                                  webView:webView
-                                                     body:@"var candidate = interactiveElement || resolvedElement;"
-                                                          "while (candidate) {"
-                                                              "if (candidate.matches && candidate.matches(interactiveSelector)) { return 'true'; }"
-                                                              "candidate = candidate.parentElement;"
-                                                          "}"
-                                                          "return 'false';"];
+    __weak BrowserWebView *weakWebView = webView;
+    [self DOMPointForCursorOrigin:cursorOrigin inView:containerView webView:webView completion:^(CGPoint domPoint) {
+        BrowserWebView *strongWebView = weakWebView;
+        if (strongWebView == nil) {
+            completion(@"");
+            return;
+        }
+        [self evaluateResolvedElementJavaScriptAtPoint:domPoint
+                                               webView:strongWebView
+                                                  body:[self hoverStateJavaScriptBody]
+                                            completion:completion];
+    }];
+}
+
+// Converts a cursor origin to page (DOM) coordinates, scaling by the page's innerWidth.
+- (void)DOMPointForCursorOrigin:(CGPoint)cursorOrigin
+                         inView:(UIView *)containerView
+                        webView:(BrowserWebView *)webView
+                     completion:(void (^)(CGPoint point))completion {
+    CGPoint point = [containerView convertPoint:cursorOrigin toView:webView];
+    if (webView == nil || point.y < 0.0) {
+        completion(point);
+        return;
+    }
+
+    CGFloat webViewWidth = CGRectGetWidth([webView frame]);
+    [webView evaluateJavaScriptString:@"window.innerWidth" completion:^(NSString *widthResult) {
+        CGPoint domPoint = point;
+        NSInteger displayWidth = [widthResult integerValue];
+        CGFloat scale = displayWidth > 0 ? webViewWidth / (CGFloat)displayWidth : 0.0;
+        if (scale > 0.0) {
+            domPoint.x /= scale;
+            domPoint.y /= scale;
+        }
+        completion(domPoint);
+    }];
 }
 
 - (NSString *)javaScriptEscapedString:(NSString *)string {
@@ -172,80 +204,83 @@ static NSString * const kEditableElementSelector = @"input, textarea, select, [c
     return escapedString;
 }
 
-- (NSDictionary *)videoInfoAtDOMPoint:(CGPoint)point
-                               webView:(BrowserWebView *)webView {
-    NSString *result = [self evaluateResolvedElementJavaScriptAtPoint:point
-                                                               webView:webView
-                                                                  body:@"function browserAbsoluteURL(url) {"
-                                                                       "if (!url) { return ''; }"
-                                                                       "try { return String(new URL(url, document.baseURI).toString()); } catch (error) { return String(url); }"
-                                                                       "}"
-                                                                       "function browserVideoContainsPoint(video) {"
-                                                                           "if (!video || typeof video.getBoundingClientRect !== 'function') { return false; }"
-                                                                           "var rect = video.getBoundingClientRect();"
-                                                                           "return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;"
-                                                                       "}"
-                                                                       "function browserResolveVideoElement() {"
-                                                                           "var candidate = resolvedElement;"
-                                                                           "while (candidate) {"
-                                                                               "if (candidate.tagName && candidate.tagName.toLowerCase() === 'video') { return candidate; }"
-                                                                               "candidate = candidate.parentElement;"
-                                                                           "}"
-                                                                           "var videos = document.querySelectorAll('video');"
-                                                                           "var bestVisibleVideo = null;"
-                                                                           "var bestVisibleArea = 0;"
-                                                                           "for (var i = 0; i < videos.length; i++) {"
-                                                                               "var video = videos[i];"
-                                                                               "if (browserVideoContainsPoint(video)) { return video; }"
-                                                                               "if (!video || typeof video.getBoundingClientRect !== 'function') { continue; }"
-                                                                               "var rect = video.getBoundingClientRect();"
-                                                                               "var visibleWidth = Math.max(0, Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0));"
-                                                                               "var visibleHeight = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0));"
-                                                                               "var visibleArea = visibleWidth * visibleHeight;"
-                                                                               "if (visibleArea <= 0) { continue; }"
-                                                                               "if (!video.paused && !video.ended && video.readyState >= 2) { return video; }"
-                                                                               "if (visibleArea > bestVisibleArea) {"
-                                                                                   "bestVisibleArea = visibleArea;"
-                                                                                   "bestVisibleVideo = video;"
-                                                                               "}"
-                                                                           "}"
-                                                                           "return bestVisibleVideo;"
-                                                                       "}"
-                                                                       "function browserResolvePrimarySource(video) {"
-                                                                           "if (!video) { return ''; }"
-                                                                           "if (video.currentSrc) { return browserAbsoluteURL(video.currentSrc); }"
-                                                                           "if (video.src) { return browserAbsoluteURL(video.src); }"
-                                                                           "var sources = video.querySelectorAll('source');"
-                                                                           "for (var i = 0; i < sources.length; i++) {"
-                                                                               "var sourceSrc = sources[i].src || sources[i].getAttribute('src') || '';"
-                                                                               "if (sourceSrc) { return browserAbsoluteURL(sourceSrc); }"
-                                                                           "}"
-                                                                           "return '';"
-                                                                       "}"
-                                                                       "function browserResolveSourceList(video) {"
-                                                                           "var values = [];"
-                                                                           "if (!video) { return values; }"
-                                                                           "if (video.currentSrc) { values.push(browserAbsoluteURL(video.currentSrc)); }"
-                                                                           "if (video.src && values.indexOf(browserAbsoluteURL(video.src)) === -1) { values.push(browserAbsoluteURL(video.src)); }"
-                                                                           "var sources = video.querySelectorAll('source');"
-                                                                           "for (var i = 0; i < sources.length; i++) {"
-                                                                               "var sourceSrc = sources[i].src || sources[i].getAttribute('src') || '';"
-                                                                               "sourceSrc = browserAbsoluteURL(sourceSrc);"
-                                                                               "if (sourceSrc && values.indexOf(sourceSrc) === -1) { values.push(sourceSrc); }"
-                                                                           "}"
-                                                                           "return values;"
-                                                                       "}"
-                                                                       "var video = browserResolveVideoElement();"
-                                                                       "if (!video) { return ''; }"
-                                                                       "return JSON.stringify({"
-                                                                           "src: browserResolvePrimarySource(video),"
-                                                                           "sources: browserResolveSourceList(video),"
-                                                                           "poster: browserAbsoluteURL(video.poster || ''),"
-                                                                           "title: video.getAttribute('title') || video.getAttribute('aria-label') || document.title || '',"
-                                                                           "tagName: video.tagName ? video.tagName.toLowerCase() : '',"
-                                                                           "paused: !!video.paused"
-                                                                       "});"];
-    return [self JSONObjectFromJavaScriptString:result];
+- (void)videoInfoAtDOMPoint:(CGPoint)point
+                    webView:(BrowserWebView *)webView
+                 completion:(void (^)(NSDictionary *videoInfo))completion {
+    [self evaluateResolvedElementJavaScriptAtPoint:point
+                                            webView:webView
+                                               body:@"function browserAbsoluteURL(url) {"
+                                                    "if (!url) { return ''; }"
+                                                    "try { return String(new URL(url, document.baseURI).toString()); } catch (error) { return String(url); }"
+                                                    "}"
+                                                    "function browserVideoContainsPoint(video) {"
+                                                        "if (!video || typeof video.getBoundingClientRect !== 'function') { return false; }"
+                                                        "var rect = video.getBoundingClientRect();"
+                                                        "return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;"
+                                                    "}"
+                                                    "function browserResolveVideoElement() {"
+                                                        "var candidate = resolvedElement;"
+                                                        "while (candidate) {"
+                                                            "if (candidate.tagName && candidate.tagName.toLowerCase() === 'video') { return candidate; }"
+                                                            "candidate = candidate.parentElement;"
+                                                        "}"
+                                                        "var videos = document.querySelectorAll('video');"
+                                                        "var bestVisibleVideo = null;"
+                                                        "var bestVisibleArea = 0;"
+                                                        "for (var i = 0; i < videos.length; i++) {"
+                                                            "var video = videos[i];"
+                                                            "if (browserVideoContainsPoint(video)) { return video; }"
+                                                            "if (!video || typeof video.getBoundingClientRect !== 'function') { continue; }"
+                                                            "var rect = video.getBoundingClientRect();"
+                                                            "var visibleWidth = Math.max(0, Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0));"
+                                                            "var visibleHeight = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0));"
+                                                            "var visibleArea = visibleWidth * visibleHeight;"
+                                                            "if (visibleArea <= 0) { continue; }"
+                                                            "if (!video.paused && !video.ended && video.readyState >= 2) { return video; }"
+                                                            "if (visibleArea > bestVisibleArea) {"
+                                                                "bestVisibleArea = visibleArea;"
+                                                                "bestVisibleVideo = video;"
+                                                            "}"
+                                                        "}"
+                                                        "return bestVisibleVideo;"
+                                                    "}"
+                                                    "function browserResolvePrimarySource(video) {"
+                                                        "if (!video) { return ''; }"
+                                                        "if (video.currentSrc) { return browserAbsoluteURL(video.currentSrc); }"
+                                                        "if (video.src) { return browserAbsoluteURL(video.src); }"
+                                                        "var sources = video.querySelectorAll('source');"
+                                                        "for (var i = 0; i < sources.length; i++) {"
+                                                            "var sourceSrc = sources[i].src || sources[i].getAttribute('src') || '';"
+                                                            "if (sourceSrc) { return browserAbsoluteURL(sourceSrc); }"
+                                                        "}"
+                                                        "return '';"
+                                                    "}"
+                                                    "function browserResolveSourceList(video) {"
+                                                        "var values = [];"
+                                                        "if (!video) { return values; }"
+                                                        "if (video.currentSrc) { values.push(browserAbsoluteURL(video.currentSrc)); }"
+                                                        "if (video.src && values.indexOf(browserAbsoluteURL(video.src)) === -1) { values.push(browserAbsoluteURL(video.src)); }"
+                                                        "var sources = video.querySelectorAll('source');"
+                                                        "for (var i = 0; i < sources.length; i++) {"
+                                                            "var sourceSrc = sources[i].src || sources[i].getAttribute('src') || '';"
+                                                            "sourceSrc = browserAbsoluteURL(sourceSrc);"
+                                                            "if (sourceSrc && values.indexOf(sourceSrc) === -1) { values.push(sourceSrc); }"
+                                                        "}"
+                                                        "return values;"
+                                                    "}"
+                                                    "var video = browserResolveVideoElement();"
+                                                    "if (!video) { return ''; }"
+                                                    "return JSON.stringify({"
+                                                        "src: browserResolvePrimarySource(video),"
+                                                        "sources: browserResolveSourceList(video),"
+                                                        "poster: browserAbsoluteURL(video.poster || ''),"
+                                                        "title: video.getAttribute('title') || video.getAttribute('aria-label') || document.title || '',"
+                                                        "tagName: video.tagName ? video.tagName.toLowerCase() : '',"
+                                                        "paused: !!video.paused"
+                                                    "});"
+                                      completion:^(NSString *result) {
+        completion([self JSONObjectFromJavaScriptString:result]);
+    }];
 }
 
 - (NSDictionary *)linkInfoAtDOMPoint:(CGPoint)point
@@ -276,215 +311,231 @@ static NSString * const kEditableElementSelector = @"input, textarea, select, [c
     return [self JSONObjectFromJavaScriptString:result];
 }
 
-- (NSDictionary *)directVideoInfoAtDOMPoint:(CGPoint)point
-                                     webView:(BrowserWebView *)webView {
-    NSString *result = [self evaluateResolvedElementJavaScriptAtPoint:point
-                                                               webView:webView
-                                                                  body:@"function browserAbsoluteURL(url) {"
-                                                                       "if (!url) { return ''; }"
-                                                                       "try { return String(new URL(url, document.baseURI).toString()); } catch (error) { return String(url); }"
-                                                                       "}"
-                                                                       "function browserVideoContainsPoint(video) {"
-                                                                           "if (!video || typeof video.getBoundingClientRect !== 'function') { return false; }"
-                                                                           "var rect = video.getBoundingClientRect();"
-                                                                           "return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;"
-                                                                       "}"
-                                                                       "function browserResolveDirectVideoElement() {"
-                                                                           "var candidate = resolvedElement;"
-                                                                           "while (candidate) {"
-                                                                               "if (candidate.tagName && candidate.tagName.toLowerCase() === 'video') { return candidate; }"
-                                                                               "candidate = candidate.parentElement;"
-                                                                           "}"
-                                                                           "var videos = document.querySelectorAll('video');"
-                                                                           "for (var i = 0; i < videos.length; i++) {"
-                                                                               "if (browserVideoContainsPoint(videos[i])) { return videos[i]; }"
-                                                                           "}"
-                                                                           "return null;"
-                                                                       "}"
-                                                                       "function browserResolvePrimarySource(video) {"
-                                                                           "if (!video) { return ''; }"
-                                                                           "if (video.currentSrc) { return browserAbsoluteURL(video.currentSrc); }"
-                                                                           "if (video.src) { return browserAbsoluteURL(video.src); }"
-                                                                           "var sources = video.querySelectorAll('source');"
-                                                                           "for (var i = 0; i < sources.length; i++) {"
-                                                                               "var sourceSrc = sources[i].src || sources[i].getAttribute('src') || '';"
-                                                                               "if (sourceSrc) { return browserAbsoluteURL(sourceSrc); }"
-                                                                           "}"
-                                                                           "return '';"
-                                                                       "}"
-                                                                       "function browserResolveSourceList(video) {"
-                                                                           "var values = [];"
-                                                                           "if (!video) { return values; }"
-                                                                           "if (video.currentSrc) { values.push(browserAbsoluteURL(video.currentSrc)); }"
-                                                                           "if (video.src && values.indexOf(browserAbsoluteURL(video.src)) === -1) { values.push(browserAbsoluteURL(video.src)); }"
-                                                                           "var sources = video.querySelectorAll('source');"
-                                                                           "for (var i = 0; i < sources.length; i++) {"
-                                                                               "var sourceSrc = sources[i].src || sources[i].getAttribute('src') || '';"
-                                                                               "sourceSrc = browserAbsoluteURL(sourceSrc);"
-                                                                               "if (sourceSrc && values.indexOf(sourceSrc) === -1) { values.push(sourceSrc); }"
-                                                                           "}"
-                                                                           "return values;"
-                                                                       "}"
-                                                                       "var video = browserResolveDirectVideoElement();"
-                                                                       "if (!video) { return ''; }"
-                                                                       "return JSON.stringify({"
-                                                                           "src: browserResolvePrimarySource(video),"
-                                                                           "sources: browserResolveSourceList(video),"
-                                                                           "poster: browserAbsoluteURL(video.poster || ''),"
-                                                                           "title: video.getAttribute('title') || video.getAttribute('aria-label') || document.title || '',"
-                                                                           "tagName: video.tagName ? video.tagName.toLowerCase() : '',"
-                                                                           "paused: !!video.paused"
-                                                                       "});"];
-    return [self JSONObjectFromJavaScriptString:result];
+- (void)directVideoInfoAtDOMPoint:(CGPoint)point
+                          webView:(BrowserWebView *)webView
+                       completion:(void (^)(NSDictionary *videoInfo))completion {
+    [self evaluateResolvedElementJavaScriptAtPoint:point
+                                            webView:webView
+                                               body:@"function browserAbsoluteURL(url) {"
+                                                    "if (!url) { return ''; }"
+                                                    "try { return String(new URL(url, document.baseURI).toString()); } catch (error) { return String(url); }"
+                                                    "}"
+                                                    "function browserVideoContainsPoint(video) {"
+                                                        "if (!video || typeof video.getBoundingClientRect !== 'function') { return false; }"
+                                                        "var rect = video.getBoundingClientRect();"
+                                                        "return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;"
+                                                    "}"
+                                                    "function browserResolveDirectVideoElement() {"
+                                                        "var candidate = resolvedElement;"
+                                                        "while (candidate) {"
+                                                            "if (candidate.tagName && candidate.tagName.toLowerCase() === 'video') { return candidate; }"
+                                                            "candidate = candidate.parentElement;"
+                                                        "}"
+                                                        "var videos = document.querySelectorAll('video');"
+                                                        "for (var i = 0; i < videos.length; i++) {"
+                                                            "if (browserVideoContainsPoint(videos[i])) { return videos[i]; }"
+                                                        "}"
+                                                        "return null;"
+                                                    "}"
+                                                    "function browserResolvePrimarySource(video) {"
+                                                        "if (!video) { return ''; }"
+                                                        "if (video.currentSrc) { return browserAbsoluteURL(video.currentSrc); }"
+                                                        "if (video.src) { return browserAbsoluteURL(video.src); }"
+                                                        "var sources = video.querySelectorAll('source');"
+                                                        "for (var i = 0; i < sources.length; i++) {"
+                                                            "var sourceSrc = sources[i].src || sources[i].getAttribute('src') || '';"
+                                                            "if (sourceSrc) { return browserAbsoluteURL(sourceSrc); }"
+                                                        "}"
+                                                        "return '';"
+                                                    "}"
+                                                    "function browserResolveSourceList(video) {"
+                                                        "var values = [];"
+                                                        "if (!video) { return values; }"
+                                                        "if (video.currentSrc) { values.push(browserAbsoluteURL(video.currentSrc)); }"
+                                                        "if (video.src && values.indexOf(browserAbsoluteURL(video.src)) === -1) { values.push(browserAbsoluteURL(video.src)); }"
+                                                        "var sources = video.querySelectorAll('source');"
+                                                        "for (var i = 0; i < sources.length; i++) {"
+                                                            "var sourceSrc = sources[i].src || sources[i].getAttribute('src') || '';"
+                                                            "sourceSrc = browserAbsoluteURL(sourceSrc);"
+                                                            "if (sourceSrc && values.indexOf(sourceSrc) === -1) { values.push(sourceSrc); }"
+                                                        "}"
+                                                        "return values;"
+                                                    "}"
+                                                    "var video = browserResolveDirectVideoElement();"
+                                                    "if (!video) { return ''; }"
+                                                    "return JSON.stringify({"
+                                                        "src: browserResolvePrimarySource(video),"
+                                                        "sources: browserResolveSourceList(video),"
+                                                        "poster: browserAbsoluteURL(video.poster || ''),"
+                                                        "title: video.getAttribute('title') || video.getAttribute('aria-label') || document.title || '',"
+                                                        "tagName: video.tagName ? video.tagName.toLowerCase() : '',"
+                                                        "paused: !!video.paused"
+                                                    "});"
+                                      completion:^(NSString *result) {
+        completion([self JSONObjectFromJavaScriptString:result]);
+    }];
 }
 
-- (BOOL)isVideoActivationTargetAtDOMPoint:(CGPoint)point
-                                   webView:(BrowserWebView *)webView {
-    NSString *result = [self evaluateResolvedElementJavaScriptAtPoint:point
-                                                               webView:webView
-                                                                  body:@"function browserVideoContainsPoint(video) {"
-                                                                       "if (!video || typeof video.getBoundingClientRect !== 'function') { return false; }"
-                                                                       "var rect = video.getBoundingClientRect();"
-                                                                       "return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;"
-                                                                       "}"
-                                                                       "function browserLooksLikeDismissControl(element) {"
-                                                                           "if (!element) { return false; }"
-                                                                           "var tagName = element.tagName ? element.tagName.toLowerCase() : '';"
-                                                                           "var role = element.getAttribute ? (element.getAttribute('role') || '').toLowerCase() : '';"
-                                                                           "var isButtonLike = tagName === 'button' || tagName === 'a' || role === 'button' ||"
-                                                                               "(typeof element.onclick === 'function') ||"
-                                                                               "(typeof element.tabIndex === 'number' && element.tabIndex >= 0);"
-                                                                           "if (!isButtonLike) { return false; }"
-                                                                           "var text = (element.textContent || '').replace(/\\s+/g, ' ').trim();"
-                                                                           "var shortText = text.length <= 3 ? text : '';"
-                                                                           "var label = ["
-                                                                               "element.id || '',"
-                                                                               "element.className || '',"
-                                                                               "element.getAttribute ? (element.getAttribute('aria-label') || '') : '',"
-                                                                               "element.getAttribute ? (element.getAttribute('title') || '') : '',"
-                                                                               "element.getAttribute ? (element.getAttribute('name') || '') : '',"
-                                                                               "shortText"
-                                                                           "].join(' ').toLowerCase();"
-                                                                           "if (!label) { return false; }"
-                                                                           "if ((/(^|[^a-z])(close|dismiss|cancel|collapse|minimi[sz]e|exit)([^a-z]|$)/).test(label) ||"
-                                                                               "label.indexOf('modal-close') !== -1 ||"
-                                                                               "label.indexOf('icon-close') !== -1) {"
-                                                                               "return true;"
-                                                                           "}"
-                                                                           "if (shortText === '×' || shortText === '✕' || shortText === '✖' || shortText === 'x' || shortText === 'X') {"
-                                                                               "return true;"
-                                                                           "}"
-                                                                           "return false;"
-                                                                       "}"
-                                                                       "function browserMatchesVideoIntent(element) {"
-                                                                           "if (!element) { return false; }"
-                                                                           "if (browserLooksLikeDismissControl(element)) { return false; }"
-                                                                           "var value = ["
-                                                                               "element.id || '',"
-                                                                               "element.className || '',"
-                                                                               "element.getAttribute ? (element.getAttribute('role') || '') : '',"
-                                                                               "element.getAttribute ? (element.getAttribute('aria-label') || '') : '',"
-                                                                               "element.getAttribute ? (element.getAttribute('aria-description') || '') : '',"
-                                                                               "element.getAttribute ? (element.getAttribute('title') || '') : ''"
-                                                                           "].join(' ').toLowerCase();"
-                                                                           "if (!value) { return false; }"
-                                                                           "var hasPlayWord = (/(^|[^a-z])(play|watch|resume|trailer)([^a-z]|$)/).test(value);"
-                                                                           "var hasControlWord = value.indexOf('ytp-') !== -1 || value.indexOf('video-play') !== -1 || value.indexOf('play-button') !== -1;"
-                                                                           "return hasPlayWord || hasControlWord;"
-                                                                       "}"
-                                                                       "function browserContainsVideoAncestor(element) {"
-                                                                           "var candidate = element;"
-                                                                           "var depth = 0;"
-                                                                           "while (candidate && depth < 10) {"
-                                                                               "if (candidate.tagName && candidate.tagName.toLowerCase() === 'video') { return true; }"
-                                                                               "candidate = candidate.parentElement;"
-                                                                               "depth += 1;"
-                                                                           "}"
-                                                                           "return false;"
-                                                                       "}"
-                                                                       "function browserLooksLikeNavigationTarget(element) {"
-                                                                           "if (!element) { return false; }"
-                                                                           "var tagName = element.tagName ? element.tagName.toLowerCase() : '';"
-                                                                           "if (tagName !== 'a' && tagName !== 'button') { return false; }"
-                                                                           "if (element.closest && element.closest('nav, header, [role=\"navigation\"], .ac-gn, .ac-gn-content, .ac-gn-list, .globalnav')) { return true; }"
-                                                                           "if (tagName === 'a') {"
-                                                                               "var href = (element.getAttribute ? (element.getAttribute('href') || '') : '').trim().toLowerCase();"
-                                                                               "if (href && href !== '#' && href.indexOf('javascript:') !== 0 && href.indexOf('mailto:') !== 0 && href.indexOf('tel:') !== 0) {"
-                                                                                   "return true;"
-                                                                               "}"
-                                                                           "}"
-                                                                           "return false;"
-                                                                       "}"
-                                                                       "if (browserLooksLikeNavigationTarget(interactiveElement) &&"
-                                                                           "!browserContainsVideoAncestor(interactiveElement) &&"
-                                                                           "!browserMatchesVideoIntent(interactiveElement)) {"
-                                                                           "return 'false';"
-                                                                       "}"
-                                                                       "var candidate = resolvedElement;"
-                                                                       "var candidateDepth = 0;"
-                                                                       "while (candidate && candidateDepth < 10) {"
-                                                                           "if (browserLooksLikeDismissControl(candidate)) { return 'false'; }"
-                                                                           "if (candidate.tagName && candidate.tagName.toLowerCase() === 'video') { return 'true'; }"
-                                                                           "if (browserMatchesVideoIntent(candidate)) { return 'true'; }"
-                                                                           "candidate = candidate.parentElement;"
-                                                                           "candidateDepth += 1;"
-                                                                       "}"
-                                                                       "var videos = document.querySelectorAll('video');"
-                                                                       "for (var i = 0; i < videos.length; i++) {"
-                                                                           "if (browserVideoContainsPoint(videos[i])) {"
-                                                                               "if (browserLooksLikeNavigationTarget(interactiveElement) && !browserContainsVideoAncestor(interactiveElement)) { return 'false'; }"
-                                                                               "if (browserLooksLikeDismissControl(interactiveElement) || browserLooksLikeDismissControl(resolvedElement)) { return 'false'; }"
-                                                                               "return 'true';"
-                                                                           "}"
-                                                                       "}"
-                                                                       "return 'false';"];
-    return [result isEqualToString:@"true"];
+- (void)isVideoActivationTargetAtDOMPoint:(CGPoint)point
+                                   webView:(BrowserWebView *)webView
+                                completion:(void (^)(BOOL isTarget))completion {
+    [self evaluateResolvedElementJavaScriptAtPoint:point
+                                            webView:webView
+                                               body:@"function browserVideoContainsPoint(video) {"
+                                                    "if (!video || typeof video.getBoundingClientRect !== 'function') { return false; }"
+                                                    "var rect = video.getBoundingClientRect();"
+                                                    "return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;"
+                                                    "}"
+                                                    "function browserLooksLikeDismissControl(element) {"
+                                                        "if (!element) { return false; }"
+                                                        "var tagName = element.tagName ? element.tagName.toLowerCase() : '';"
+                                                        "var role = element.getAttribute ? (element.getAttribute('role') || '').toLowerCase() : '';"
+                                                        "var isButtonLike = tagName === 'button' || tagName === 'a' || role === 'button' ||"
+                                                            "(typeof element.onclick === 'function') ||"
+                                                            "(typeof element.tabIndex === 'number' && element.tabIndex >= 0);"
+                                                        "if (!isButtonLike) { return false; }"
+                                                        "var text = (element.textContent || '').replace(/\\s+/g, ' ').trim();"
+                                                        "var shortText = text.length <= 3 ? text : '';"
+                                                        "var label = ["
+                                                            "element.id || '',"
+                                                            "element.className || '',"
+                                                            "element.getAttribute ? (element.getAttribute('aria-label') || '') : '',"
+                                                            "element.getAttribute ? (element.getAttribute('title') || '') : '',"
+                                                            "element.getAttribute ? (element.getAttribute('name') || '') : '',"
+                                                            "shortText"
+                                                        "].join(' ').toLowerCase();"
+                                                        "if (!label) { return false; }"
+                                                        "if ((/(^|[^a-z])(close|dismiss|cancel|collapse|minimi[sz]e|exit)([^a-z]|$)/).test(label) ||"
+                                                            "label.indexOf('modal-close') !== -1 ||"
+                                                            "label.indexOf('icon-close') !== -1) {"
+                                                            "return true;"
+                                                        "}"
+                                                        "if (shortText === '×' || shortText === '✕' || shortText === '✖' || shortText === 'x' || shortText === 'X') {"
+                                                            "return true;"
+                                                        "}"
+                                                        "return false;"
+                                                    "}"
+                                                    "function browserMatchesVideoIntent(element) {"
+                                                        "if (!element) { return false; }"
+                                                        "if (browserLooksLikeDismissControl(element)) { return false; }"
+                                                        "var value = ["
+                                                            "element.id || '',"
+                                                            "element.className || '',"
+                                                            "element.getAttribute ? (element.getAttribute('role') || '') : '',"
+                                                            "element.getAttribute ? (element.getAttribute('aria-label') || '') : '',"
+                                                            "element.getAttribute ? (element.getAttribute('aria-description') || '') : '',"
+                                                            "element.getAttribute ? (element.getAttribute('title') || '') : ''"
+                                                        "].join(' ').toLowerCase();"
+                                                        "if (!value) { return false; }"
+                                                        "var hasPlayWord = (/(^|[^a-z])(play|watch|resume|trailer)([^a-z]|$)/).test(value);"
+                                                        "var hasControlWord = value.indexOf('ytp-') !== -1 || value.indexOf('video-play') !== -1 || value.indexOf('play-button') !== -1;"
+                                                        "return hasPlayWord || hasControlWord;"
+                                                    "}"
+                                                    "function browserContainsVideoAncestor(element) {"
+                                                        "var candidate = element;"
+                                                        "var depth = 0;"
+                                                        "while (candidate && depth < 10) {"
+                                                            "if (candidate.tagName && candidate.tagName.toLowerCase() === 'video') { return true; }"
+                                                            "candidate = candidate.parentElement;"
+                                                            "depth += 1;"
+                                                        "}"
+                                                        "return false;"
+                                                    "}"
+                                                    "function browserLooksLikeNavigationTarget(element) {"
+                                                        "if (!element) { return false; }"
+                                                        "var tagName = element.tagName ? element.tagName.toLowerCase() : '';"
+                                                        "if (tagName !== 'a' && tagName !== 'button') { return false; }"
+                                                        "if (element.closest && element.closest('nav, header, [role=\"navigation\"], .ac-gn, .ac-gn-content, .ac-gn-list, .globalnav')) { return true; }"
+                                                        "if (tagName === 'a') {"
+                                                            "var href = (element.getAttribute ? (element.getAttribute('href') || '') : '').trim().toLowerCase();"
+                                                            "if (href && href !== '#' && href.indexOf('javascript:') !== 0 && href.indexOf('mailto:') !== 0 && href.indexOf('tel:') !== 0) {"
+                                                                "return true;"
+                                                            "}"
+                                                        "}"
+                                                        "return false;"
+                                                    "}"
+                                                    "if (browserLooksLikeNavigationTarget(interactiveElement) &&"
+                                                        "!browserContainsVideoAncestor(interactiveElement) &&"
+                                                        "!browserMatchesVideoIntent(interactiveElement)) {"
+                                                        "return 'false';"
+                                                    "}"
+                                                    "var candidate = resolvedElement;"
+                                                    "var candidateDepth = 0;"
+                                                    "while (candidate && candidateDepth < 10) {"
+                                                        "if (browserLooksLikeDismissControl(candidate)) { return 'false'; }"
+                                                        "if (candidate.tagName && candidate.tagName.toLowerCase() === 'video') { return 'true'; }"
+                                                        "if (browserMatchesVideoIntent(candidate)) { return 'true'; }"
+                                                        "candidate = candidate.parentElement;"
+                                                        "candidateDepth += 1;"
+                                                    "}"
+                                                    "var videos = document.querySelectorAll('video');"
+                                                    "for (var i = 0; i < videos.length; i++) {"
+                                                        "if (browserVideoContainsPoint(videos[i])) {"
+                                                            "if (browserLooksLikeNavigationTarget(interactiveElement) && !browserContainsVideoAncestor(interactiveElement)) { return 'false'; }"
+                                                            "if (browserLooksLikeDismissControl(interactiveElement) || browserLooksLikeDismissControl(resolvedElement)) { return 'false'; }"
+                                                            "return 'true';"
+                                                        "}"
+                                                    "}"
+                                                    "return 'false';"
+                                      completion:^(NSString *result) {
+        completion([result isEqualToString:@"true"]);
+    }];
 }
 
-- (BOOL)isVideoDismissTargetAtDOMPoint:(CGPoint)point
-                                webView:(BrowserWebView *)webView {
-    NSString *result = [self evaluateResolvedElementJavaScriptAtPoint:point
-                                                               webView:webView
-                                                                  body:@"function browserLooksLikeDismissControl(element) {"
-                                                                       "if (!element) { return false; }"
-                                                                       "var tagName = element.tagName ? element.tagName.toLowerCase() : '';"
-                                                                       "var role = element.getAttribute ? (element.getAttribute('role') || '').toLowerCase() : '';"
-                                                                       "var isButtonLike = tagName === 'button' || tagName === 'a' || role === 'button' ||"
-                                                                           "(typeof element.onclick === 'function') ||"
-                                                                           "(typeof element.tabIndex === 'number' && element.tabIndex >= 0);"
-                                                                       "if (!isButtonLike) { return false; }"
-                                                                       "var text = (element.textContent || '').replace(/\\s+/g, ' ').trim();"
-                                                                       "var shortText = text.length <= 3 ? text : '';"
-                                                                       "var label = ["
-                                                                           "element.id || '',"
-                                                                           "element.className || '',"
-                                                                           "element.getAttribute ? (element.getAttribute('aria-label') || '') : '',"
-                                                                           "element.getAttribute ? (element.getAttribute('title') || '') : '',"
-                                                                           "element.getAttribute ? (element.getAttribute('name') || '') : '',"
-                                                                           "shortText"
-                                                                       "].join(' ').toLowerCase();"
-                                                                       "if (!label) { return false; }"
-                                                                       "if ((/(^|[^a-z])(close|dismiss|cancel|collapse|minimi[sz]e|exit)([^a-z]|$)/).test(label) ||"
-                                                                           "label.indexOf('modal-close') !== -1 ||"
-                                                                           "label.indexOf('icon-close') !== -1) {"
-                                                                           "return true;"
-                                                                       "}"
-                                                                       "if (shortText === '×' || shortText === '✕' || shortText === '✖' || shortText === 'x' || shortText === 'X') {"
-                                                                           "return true;"
-                                                                       "}"
-                                                                       "return false;"
-                                                                   "}"
-                                                                   "var candidate = interactiveElement || resolvedElement;"
-                                                                   "while (candidate) {"
-                                                                       "if (browserLooksLikeDismissControl(candidate)) { return 'true'; }"
-                                                                       "candidate = candidate.parentElement;"
-                                                                   "}"
-                                                                   "return 'false';"];
-    return [result isEqualToString:@"true"];
+- (void)isVideoDismissTargetAtDOMPoint:(CGPoint)point
+                                webView:(BrowserWebView *)webView
+                             completion:(void (^)(BOOL isTarget))completion {
+    [self evaluateResolvedElementJavaScriptAtPoint:point
+                                            webView:webView
+                                               body:@"function browserLooksLikeDismissControl(element) {"
+                                                    "if (!element) { return false; }"
+                                                    "var tagName = element.tagName ? element.tagName.toLowerCase() : '';"
+                                                    "var role = element.getAttribute ? (element.getAttribute('role') || '').toLowerCase() : '';"
+                                                    "var isButtonLike = tagName === 'button' || tagName === 'a' || role === 'button' ||"
+                                                        "(typeof element.onclick === 'function') ||"
+                                                        "(typeof element.tabIndex === 'number' && element.tabIndex >= 0);"
+                                                    "if (!isButtonLike) { return false; }"
+                                                    "var text = (element.textContent || '').replace(/\\s+/g, ' ').trim();"
+                                                    "var shortText = text.length <= 3 ? text : '';"
+                                                    "var label = ["
+                                                        "element.id || '',"
+                                                        "element.className || '',"
+                                                        "element.getAttribute ? (element.getAttribute('aria-label') || '') : '',"
+                                                        "element.getAttribute ? (element.getAttribute('title') || '') : '',"
+                                                        "element.getAttribute ? (element.getAttribute('name') || '') : '',"
+                                                        "shortText"
+                                                    "].join(' ').toLowerCase();"
+                                                    "if (!label) { return false; }"
+                                                    "if ((/(^|[^a-z])(close|dismiss|cancel|collapse|minimi[sz]e|exit)([^a-z]|$)/).test(label) ||"
+                                                        "label.indexOf('modal-close') !== -1 ||"
+                                                        "label.indexOf('icon-close') !== -1) {"
+                                                        "return true;"
+                                                    "}"
+                                                    "if (shortText === '×' || shortText === '✕' || shortText === '✖' || shortText === 'x' || shortText === 'X') {"
+                                                        "return true;"
+                                                    "}"
+                                                    "return false;"
+                                                "}"
+                                                "var candidate = interactiveElement || resolvedElement;"
+                                                "while (candidate) {"
+                                                    "if (browserLooksLikeDismissControl(candidate)) { return 'true'; }"
+                                                    "candidate = candidate.parentElement;"
+                                                "}"
+                                                "return 'false';"
+                                      completion:^(NSString *result) {
+        completion([result isEqualToString:@"true"]);
+    }];
 }
 
-- (NSDictionary *)primedVideoInfoAtDOMPoint:(CGPoint)point
-                                     webView:(BrowserWebView *)webView {
+- (void)primedVideoInfoAtDOMPoint:(CGPoint)point
+                          webView:(BrowserWebView *)webView
+                       completion:(void (^)(NSDictionary *videoInfo))completion {
+    if (webView == nil) {
+        completion(nil);
+        return;
+    }
+
+    __weak BrowserWebView *weakWebView = webView;
     [self evaluateResolvedElementJavaScriptAtPoint:point
                                            webView:webView
                                               body:@"window.__browserPrimedVideoInfo = '';"
@@ -575,29 +626,49 @@ static NSString * const kEditableElementSelector = @"input, textarea, select, [c
                                                    "} catch (error) {"
                                                        "setTimeout(finish, 0);"
                                                    "}"
-                                                   "return 'started';"];
-
-    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:0.75];
-    while ([deadline timeIntervalSinceNow] > 0) {
-        NSString *result = [webView stringByEvaluatingJavaScriptFromString:@"window.__browserPrimedVideoInfo || ''"];
-        NSDictionary *videoInfo = [self JSONObjectFromJavaScriptString:result];
-        if (videoInfo.count > 0) {
-            return videoInfo;
-        }
-        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.02]];
-    }
-
-    return nil;
+                                                   "return 'started';"
+                                      completion:^(__unused NSString *startResult) {
+        CFTimeInterval deadline = CACurrentMediaTime() + 0.75;
+        [self pollPrimedVideoInfoInWebView:weakWebView deadline:deadline completion:completion];
+    }];
 }
 
-- (NSDictionary *)activateVideoTargetAtDOMPoint:(CGPoint)point
-                                         webView:(BrowserWebView *)webView
-                                         timeout:(NSTimeInterval)timeout {
+// Polls (without blocking) for the info the primed-play script stores asynchronously.
+- (void)pollPrimedVideoInfoInWebView:(BrowserWebView *)webView
+                            deadline:(CFTimeInterval)deadline
+                          completion:(void (^)(NSDictionary *videoInfo))completion {
     if (webView == nil) {
-        return nil;
+        completion(nil);
+        return;
+    }
+    __weak BrowserWebView *weakWebView = webView;
+    [webView evaluateJavaScriptString:@"window.__browserPrimedVideoInfo || ''" completion:^(NSString *result) {
+        NSDictionary *videoInfo = [self JSONObjectFromJavaScriptString:result];
+        if (videoInfo.count > 0) {
+            completion(videoInfo);
+            return;
+        }
+        if (CACurrentMediaTime() >= deadline) {
+            completion(nil);
+            return;
+        }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.02 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self pollPrimedVideoInfoInWebView:weakWebView deadline:deadline completion:completion];
+        });
+    }];
+}
+
+- (void)activateVideoTargetAtDOMPoint:(CGPoint)point
+                              webView:(BrowserWebView *)webView
+                              timeout:(NSTimeInterval)timeout
+                           completion:(void (^)(NSDictionary *videoInfo))completion {
+    if (webView == nil) {
+        completion(nil);
+        return;
     }
 
     NSTimeInterval effectiveTimeout = timeout > 0.0 ? timeout : 1.5;
+    __weak BrowserWebView *weakWebView = webView;
     [self evaluateResolvedElementJavaScriptAtPoint:point
                                            webView:webView
                                               body:@"function browserMatchesVideoIntent(element) {"
@@ -708,32 +779,67 @@ static NSString * const kEditableElementSelector = @"input, textarea, select, [c
                                                "dispatchPointerLikeEvent(target, 'mouseup', 'MouseEvent');"
                                                "if (typeof target.click === 'function') { target.click(); }"
                                                "else { dispatchPointerLikeEvent(target, 'click', 'MouseEvent'); }"
-                                               "return 'clicked';"];
+                                               "return 'clicked';"
+                                      completion:^(__unused NSString *clickResult) {
+        CFTimeInterval deadline = CACurrentMediaTime() + effectiveTimeout;
+        [self pollActivatedVideoInfoAtDOMPoint:point
+                                       webView:weakWebView
+                                      deadline:deadline
+                                 lastVideoInfo:nil
+                                    completion:completion];
+    }];
+}
 
-    NSDictionary *lastVideoInfo = nil;
-    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:effectiveTimeout];
-    while ([deadline timeIntervalSinceNow] > 0) {
-        NSDictionary *directVideoInfo = [self directVideoInfoAtDOMPoint:point webView:webView];
+// After the synthetic click, poll (without blocking) until the page exposes a video
+// source at the point, or the deadline passes (then report the last partial info).
+- (void)pollActivatedVideoInfoAtDOMPoint:(CGPoint)point
+                                 webView:(BrowserWebView *)webView
+                                deadline:(CFTimeInterval)deadline
+                           lastVideoInfo:(NSDictionary *)lastVideoInfo
+                              completion:(void (^)(NSDictionary *videoInfo))completion {
+    if (webView == nil) {
+        completion(lastVideoInfo);
+        return;
+    }
+    __weak BrowserWebView *weakWebView = webView;
+    [self directVideoInfoAtDOMPoint:point webView:webView completion:^(NSDictionary *directVideoInfo) {
         NSString *directSrc = [directVideoInfo[@"src"] isKindOfClass:[NSString class]] ? directVideoInfo[@"src"] : @"";
         NSArray *directSources = [directVideoInfo[@"sources"] isKindOfClass:[NSArray class]] ? directVideoInfo[@"sources"] : @[];
         if (directSrc.length > 0 || directSources.count > 0) {
-            return directVideoInfo;
+            completion(directVideoInfo);
+            return;
         }
 
-        NSDictionary *videoInfo = [self videoInfoAtDOMPoint:point webView:webView];
-        if (videoInfo.count > 0) {
-            lastVideoInfo = videoInfo;
-            NSString *videoSrc = [videoInfo[@"src"] isKindOfClass:[NSString class]] ? videoInfo[@"src"] : @"";
-            NSArray *videoSources = [videoInfo[@"sources"] isKindOfClass:[NSArray class]] ? videoInfo[@"sources"] : @[];
-            if (videoSrc.length > 0 || videoSources.count > 0) {
-                return videoInfo;
+        BrowserWebView *strongWebView = weakWebView;
+        if (strongWebView == nil) {
+            completion(lastVideoInfo);
+            return;
+        }
+        [self videoInfoAtDOMPoint:point webView:strongWebView completion:^(NSDictionary *videoInfo) {
+            NSDictionary *latestVideoInfo = lastVideoInfo;
+            if (videoInfo.count > 0) {
+                latestVideoInfo = videoInfo;
+                NSString *videoSrc = [videoInfo[@"src"] isKindOfClass:[NSString class]] ? videoInfo[@"src"] : @"";
+                NSArray *videoSources = [videoInfo[@"sources"] isKindOfClass:[NSArray class]] ? videoInfo[@"sources"] : @[];
+                if (videoSrc.length > 0 || videoSources.count > 0) {
+                    completion(videoInfo);
+                    return;
+                }
             }
-        }
 
-        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
-    }
-
-    return lastVideoInfo;
+            if (CACurrentMediaTime() >= deadline) {
+                completion(latestVideoInfo);
+                return;
+            }
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [self pollActivatedVideoInfoAtDOMPoint:point
+                                               webView:weakWebView
+                                              deadline:deadline
+                                         lastVideoInfo:latestVideoInfo
+                                            completion:completion];
+            });
+        }];
+    }];
 }
 
 - (NSDictionary *)JSONObjectFromJavaScriptString:(NSString *)string {

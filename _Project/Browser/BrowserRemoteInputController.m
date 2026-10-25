@@ -75,6 +75,8 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
 // the cursor from press-began until the click resolves.
 @property (nonatomic) BOOL cursorFrozenForClick;
 @property (nonatomic) CFTimeInterval cursorFreezeTimestamp;
+@property (nonatomic) BOOL hoverQueryInFlight;
+@property (nonatomic) BOOL hoverQueryPending;
 
 @end
 
@@ -248,9 +250,14 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
         [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(handleDeferredSelectPressAction) object:nil];
         if (![self.host browserRemoteInputControllerTabOverviewVisible]) {
             // Double-tap on a video fullscreens it; elsewhere it toggles cursor/scroll mode.
-            if (![self.host browserRemoteInputControllerFullscreenVideoAtCursor]) {
-                [self setCursorModeEnabled:!self.cursorModeEnabled];
-            }
+            __weak typeof(self) weakSelf = self;
+            [self.host browserRemoteInputControllerFullscreenVideoAtCursorWithCompletion:^(BOOL found) {
+                __strong typeof(weakSelf) strongSelf = weakSelf;
+                if (strongSelf == nil || found) {
+                    return;
+                }
+                [strongSelf setCursorModeEnabled:!strongSelf.cursorModeEnabled];
+            }];
         }
         return;
     }
@@ -572,18 +579,46 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
             break;
         }
         if (self.cursorModeEnabled) {
-            NSString *containsLink = [self.host browserRemoteInputControllerHoverStateAtCursorPoint:[self cursorAimPoint]];
-            if ([containsLink isEqualToString:@"true"]) {
-                [self updateCursorPointerState:YES];
-            } else if ([containsLink isEqualToString:@"false"]) {
-                [self updateCursorPointerState:NO];
-            }
-            // Respuesta vacía/ambigua del WebView: conservar el cursor actual para evitar el parpadeo.
+            [self requestHoverStateUpdate];
         }
         break;
     }
 
     return YES;
+}
+
+// Hover is resolved asynchronously: a synchronous JS eval here pumps a nested run loop
+// inside touch delivery, and UIKit traps when the next event re-enters sendEvent:.
+// Only one query runs at a time; moves during it coalesce into a single follow-up
+// at the latest cursor position.
+- (void)requestHoverStateUpdate {
+    if (self.hoverQueryInFlight) {
+        self.hoverQueryPending = YES;
+        return;
+    }
+    self.hoverQueryInFlight = YES;
+    __weak typeof(self) weakSelf = self;
+    [self.host browserRemoteInputControllerHoverStateAtCursorPoint:[self cursorAimPoint] completion:^(NSString *containsLink) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (strongSelf == nil) {
+            return;
+        }
+        strongSelf.hoverQueryInFlight = NO;
+        if (strongSelf.hoverQueryPending) {
+            strongSelf.hoverQueryPending = NO;
+            [strongSelf requestHoverStateUpdate];
+            return;
+        }
+        if (!strongSelf.cursorModeEnabled) {
+            return;
+        }
+        if ([containsLink isEqualToString:@"true"]) {
+            [strongSelf updateCursorPointerState:YES];
+        } else if ([containsLink isEqualToString:@"false"]) {
+            [strongSelf updateCursorPointerState:NO];
+        }
+        // Respuesta vacía/ambigua del WebView: conservar el cursor actual para evitar el parpadeo.
+    }];
 }
 
 - (void)handleTouchesEnded {

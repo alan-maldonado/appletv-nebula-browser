@@ -505,12 +505,6 @@ static UIColor *kTextColor(void) {
     return self.tabCoordinator.activeWebView;
 }
 
-- (CGPoint)browserDOMPointForCursor {
-    return [self.domInteractionService DOMPointForCursorOrigin:[self.remoteInputController cursorAimPoint]
-                                                        inView:self.view
-                                                       webView:self.webview];
-}
-
 - (void)loadHomePage {
     [self.tabCoordinator loadHomePage];
 }
@@ -771,8 +765,10 @@ static UIColor *kTextColor(void) {
         return;
     }
 
-    CGPoint domPoint = [self browserDOMPointForCursor];
-    [self.pageActionCoordinator handlePageSelectionAtDOMPoint:domPoint webView:self.webview];
+    BrowserWebView *webView = self.webview;
+    [self browserResolveDOMCursorPointWithCompletion:^(CGPoint domPoint) {
+        [self.pageActionCoordinator handlePageSelectionAtDOMPoint:domPoint webView:webView];
+    }];
 }
 
 - (NSArray<id<UIFocusEnvironment>> *)preferredFocusEnvironments {
@@ -920,8 +916,11 @@ static UIColor *kTextColor(void) {
     return self.remoteInputController.cursorModeEnabled;
 }
 
-- (CGPoint)browserDOMCursorPoint {
-    return [self browserDOMPointForCursor];
+- (void)browserResolveDOMCursorPointWithCompletion:(void (^)(CGPoint))completion {
+    [self.domInteractionService DOMPointForCursorOrigin:[self.remoteInputController cursorAimPoint]
+                                                 inView:self.view
+                                                webView:self.webview
+                                             completion:completion];
 }
 
 - (UIViewController *)browserPresentedViewController {
@@ -1044,14 +1043,24 @@ static UIColor *kTextColor(void) {
     [self browserHandlePrimaryAction];
 }
 
-- (BOOL)browserRemoteInputControllerFullscreenVideoAtCursor {
+- (void)browserRemoteInputControllerFullscreenVideoAtCursorWithCompletion:(void (^)(BOOL))completion {
     if (!self.remoteInputController.cursorModeEnabled || self.webview == nil) {
-        return NO;
+        completion(NO);
+        return;
     }
-    CGPoint domPoint = [self browserDOMPointForCursor];
-    if (domPoint.y < 0) {
-        return NO; // cursor is over the top bar, not the page
-    }
+    BrowserWebView *webView = self.webview;
+    [self browserResolveDOMCursorPointWithCompletion:^(CGPoint domPoint) {
+        if (domPoint.y < 0) {
+            completion(NO); // cursor is over the top bar, not the page
+            return;
+        }
+        [self fullscreenVideoAtDOMPoint:domPoint webView:webView completion:completion];
+    }];
+}
+
+- (void)fullscreenVideoAtDOMPoint:(CGPoint)domPoint
+                          webView:(BrowserWebView *)webView
+                       completion:(void (^)(BOOL))completion {
     // Find a <video> at the cursor (the element, a descendant, or a player
     // ancestor's video) and fullscreen it via the page API — which our
     // fake-fullscreen hook routes to the native player (or CSS fallback).
@@ -1076,8 +1085,9 @@ static UIColor *kTextColor(void) {
         "return 'true';"
         "})()",
         (long)llround(domPoint.x), (long)llround(domPoint.y)];
-    NSString *result = [self.webview stringByEvaluatingJavaScriptFromString:script];
-    return [result isEqualToString:@"true"];
+    [webView evaluateJavaScriptString:script completion:^(NSString *result) {
+        completion([result isEqualToString:@"true"]);
+    }];
 }
 
 - (void)browserRemoteInputControllerShowTabOverview {
@@ -1198,7 +1208,8 @@ static UIColor *kTextColor(void) {
     [self showAdvancedMenu];
 }
 
-- (NSString *)browserRemoteInputControllerHoverStateAtCursorPoint:(CGPoint)point {
+- (void)browserRemoteInputControllerHoverStateAtCursorPoint:(CGPoint)point
+                                                 completion:(void (^)(NSString *))completion {
     // Reflect hover over the top bar (cursor mode) as a button glow.
     CGPoint topBarPoint = [self.view convertPoint:point toView:self.topMenuView];
     CGPoint webPointForBar = [self.view convertPoint:point toView:self.webview];
@@ -1209,14 +1220,19 @@ static UIColor *kTextColor(void) {
     }
 
     if (self.webview.request == nil) {
-        return @"false";
+        completion(@"false");
+        return;
     }
     CGPoint webPoint = [self.view convertPoint:point toView:self.webview];
     if (webPoint.y < 0) {
-        return @"false";
+        completion(@"false");
+        return;
     }
-    CGPoint domPoint = [self browserDOMPointForCursor];
-    return [self.pageActionCoordinator hoverStateAtDOMPoint:domPoint webView:self.webview];
+    // Called from touchesMoved: must not block (see BrowserWebView's async eval).
+    [self.domInteractionService evaluateHoverStateAtCursorOrigin:[self.remoteInputController cursorAimPoint]
+                                                          inView:self.view
+                                                         webView:self.webview
+                                                      completion:completion];
 }
 
 - (void)browserRemoteInputControllerSetWebInteractionEnabled:(BOOL)enabled {

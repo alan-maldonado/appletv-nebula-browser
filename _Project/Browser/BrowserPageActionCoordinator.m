@@ -36,10 +36,6 @@
     return self;
 }
 
-- (NSString *)hoverStateAtDOMPoint:(CGPoint)point webView:(BrowserWebView *)webView {
-    return [self.domInteractionService evaluateHoverStateJavaScriptAtPoint:point webView:webView];
-}
-
 - (BOOL)handleTargetBlankLinkAtDOMPoint:(CGPoint)point webView:(BrowserWebView *)webView {
     NSDictionary *linkInfo = [self.domInteractionService linkInfoAtDOMPoint:point webView:webView];
     NSString *href = [linkInfo[@"href"] isKindOfClass:[NSString class]] ? linkInfo[@"href"] : @"";
@@ -164,12 +160,20 @@
                                                                           "return 'true';", escapedText, submitClause]];
 }
 
-- (BOOL)handlePageSelectionAtDOMPoint:(CGPoint)point webView:(BrowserWebView *)webView {
-    if ([self.videoPlaybackCoordinator handleSelectPressForVideoAtCursor]) {
-        return YES;
-    }
+- (void)handlePageSelectionAtDOMPoint:(CGPoint)point webView:(BrowserWebView *)webView {
+    __weak BrowserWebView *weakWebView = webView;
+    [self.videoPlaybackCoordinator handleSelectPressForVideoAtDOMPoint:point completion:^(BOOL handled) {
+        BrowserWebView *strongWebView = weakWebView;
+        if (handled || strongWebView == nil) {
+            return;
+        }
+        [self handlePageClickAtDOMPoint:point webView:strongWebView];
+    }];
+}
+
+- (void)handlePageClickAtDOMPoint:(CGPoint)point webView:(BrowserWebView *)webView {
     if ([self handleTargetBlankLinkAtDOMPoint:point webView:webView]) {
-        return YES;
+        return;
     }
 
     NSString *fieldType = [self.domInteractionService evaluateResolvedElementJavaScriptAtPoint:point
@@ -232,7 +236,6 @@
         [fieldType isEqualToString:@"week"]) {
         [self presentEditableFieldPromptForFieldType:fieldType point:point webView:webView];
     }
-    return YES;
 }
 
 @end
