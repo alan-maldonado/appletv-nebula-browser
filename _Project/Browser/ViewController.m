@@ -13,6 +13,7 @@
 #import "BrowserPreferencesStore.h"
 #import "BrowserRemoteInputController.h"
 #import "BrowserRemoteServer.h"
+#import "BrowserRemoteState.h"
 #import "BrowserSessionStore.h"
 #import "BrowserTabViewModel.h"
 #import "BrowserTabCoordinator.h"
@@ -947,6 +948,17 @@ static UIColor *kTextColor(void) {
     [self browserShowTabOverview];
 }
 
+- (void)browserTabCoordinatorActiveTabDidRefresh {
+    BrowserTabViewModel *tab = self.tabCoordinator.activeTab;
+    NSString *URLString = tab.URLString.length > 0 ? tab.URLString : (self.webview.request.URL.absoluteString ?: @"");
+    NSString *title = self.webview.title.length > 0 ? self.webview.title : (tab.title ?: @"");
+    NSUInteger previousVersion = self.remoteServer.state.version;
+    [self.remoteServer.state updatePageTitle:title URLString:URLString];
+    if (self.remoteServer.state.version != previousVersion) {
+        [self.remoteServer stateDidChange];
+    }
+}
+
 - (void)browserTabCoordinatorUpdateTextFontSize {
     [self updateTextFontSize];
 }
@@ -1252,7 +1264,15 @@ static UIColor *kTextColor(void) {
 #pragma mark - BrowserRemoteServerDelegate
 
 - (void)remoteServer:(BrowserRemoteServer *)server openText:(NSString *)text inNewTab:(BOOL)newTab {
-    NSLog(@"[Remote] open newTab=%d text=%@", newTab, text);
+    NSURLRequest *request = [self.navigationService requestForURLOrSearchString:text];
+    if (request == nil) {
+        return;
+    }
+    if (newTab) {
+        [self.tabCoordinator createNewTabWithRequest:request];
+    } else {
+        [self.webview loadRequest:request];
+    }
 }
 
 - (BOOL)remoteServer:(BrowserRemoteServer *)server submitFieldText:(NSString *)text fieldID:(NSString *)fieldID submitForm:(BOOL)submitForm {

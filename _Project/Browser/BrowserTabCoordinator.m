@@ -220,6 +220,7 @@ static CGFloat const kThumbnailStagingOffset = 4096.0;
     BrowserTabViewModel *tab = self.activeTab;
     if (tab == nil) {
         self.topMenuView.URLLabel.text = @"";
+        [self.host browserTabCoordinatorActiveTabDidRefresh];
         return;
     }
 
@@ -230,6 +231,7 @@ static CGFloat const kThumbnailStagingOffset = 4096.0;
     if (request != nil) {
         [self.host browserTabCoordinatorUpdateTextFontSize];
     }
+    [self.host browserTabCoordinatorActiveTabDidRefresh];
 }
 
 - (BOOL)restoreBrowserSession {

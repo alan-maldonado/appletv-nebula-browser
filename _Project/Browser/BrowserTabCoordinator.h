@@ -18,6 +18,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)browserTabCoordinatorUpdateTextFontSize;
 - (BOOL)browserTabCoordinatorIsCursorModeEnabled;
 - (BOOL)browserTabCoordinatorIsTabOverviewVisible;
+// The active tab's URL/title UI was refreshed (load finished, tab switched).
+- (void)browserTabCoordinatorActiveTabDidRefresh;
 
 @end
 
