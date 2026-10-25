@@ -285,7 +285,7 @@ static UIColor *kTextColor(void) {
 
 @end
 
-@interface ViewController () <BrowserMenuCoordinatorHost, BrowserPageActionCoordinatorHost, BrowserRemoteInputControllerHost, BrowserTabCoordinatorHost, BrowserTabOverviewControllerHost, BrowserTopBarViewDelegate, BrowserVideoPlaybackCoordinatorHost>
+@interface ViewController () <BrowserMenuCoordinatorHost, BrowserPageActionCoordinatorHost, BrowserRemoteInputControllerHost, BrowserRemoteServerDelegate, BrowserTabCoordinatorHost, BrowserTabOverviewControllerHost, BrowserTopBarViewDelegate, BrowserVideoPlaybackCoordinatorHost>
 
 @property (nonatomic) BrowserDOMInteractionService *domInteractionService;
 @property (nonatomic) BrowserMenuCoordinator *menuCoordinator;
@@ -322,6 +322,7 @@ static UIColor *kTextColor(void) {
     self.preferencesStore = [BrowserPreferencesStore new];
     [self.preferencesStore ensureUserAgentConsistency];
     self.remoteServer = [BrowserRemoteServer new];
+    self.remoteServer.delegate = self;
     // Reinstalls reset the alternate icon while the theme preference persists.
     [BrowserMenuCoordinator applyAppIconForCurrentTheme];
 
@@ -1246,6 +1247,21 @@ static UIColor *kTextColor(void) {
 
 - (void)browserRemoteInputControllerPersistSession {
     [self.tabCoordinator persistSession];
+}
+
+#pragma mark - BrowserRemoteServerDelegate
+
+- (void)remoteServer:(BrowserRemoteServer *)server openText:(NSString *)text inNewTab:(BOOL)newTab {
+    NSLog(@"[Remote] open newTab=%d text=%@", newTab, text);
+}
+
+- (BOOL)remoteServer:(BrowserRemoteServer *)server submitFieldText:(NSString *)text fieldID:(NSString *)fieldID submitForm:(BOOL)submitForm {
+    NSLog(@"[Remote] field id=%@ submit=%d", fieldID, submitForm);
+    return NO;
+}
+
+- (NSString *)remoteServerPageHTML:(BrowserRemoteServer *)server {
+    return @"<!doctype html><meta charset=\"utf-8\"><h1>Nebula Remote</h1>";
 }
 
 #pragma mark - BrowserWebViewDelegate
