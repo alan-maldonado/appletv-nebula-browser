@@ -12,6 +12,7 @@
 #import "BrowserPageActionCoordinator.h"
 #import "BrowserPreferencesStore.h"
 #import "BrowserRemoteInputController.h"
+#import "BrowserRemoteServer.h"
 #import "BrowserSessionStore.h"
 #import "BrowserTabViewModel.h"
 #import "BrowserTabCoordinator.h"
@@ -293,6 +294,7 @@ static UIColor *kTextColor(void) {
 @property (nonatomic) BrowserPreferencesStore *preferencesStore;
 @property (nonatomic) BrowserRemoteInputController *remoteInputController;
 @property (nonatomic) BrowserSessionStore *sessionStore;
+@property (nonatomic) BrowserRemoteServer *remoteServer;
 @property (nonatomic) BrowserTabCoordinator *tabCoordinator;
 @property (nonatomic) BrowserTabOverviewController *tabOverviewController;
 @property (nonatomic) BrowserVideoPlaybackCoordinator *videoPlaybackCoordinator;
@@ -319,6 +321,7 @@ static UIColor *kTextColor(void) {
 
     self.preferencesStore = [BrowserPreferencesStore new];
     [self.preferencesStore ensureUserAgentConsistency];
+    self.remoteServer = [BrowserRemoteServer new];
     // Reinstalls reset the alternate icon while the theme preference persists.
     [BrowserMenuCoordinator applyAppIconForCurrentTheme];
 
@@ -440,6 +443,7 @@ static UIColor *kTextColor(void) {
     (void)notification;
     [self applyExitPrivacyActions];
     [self showPrivacyCoverIfNeeded];
+    [self.remoteServer stop];
 }
 
 - (void)handleApplicationWillTerminate:(NSNotification *)notification {
@@ -450,6 +454,7 @@ static UIColor *kTextColor(void) {
 - (void)handleApplicationDidBecomeActive:(NSNotification *)notification {
     (void)notification;
     [self hidePrivacyCover];
+    [self.remoteServer start];
 }
 
 // Persist or wipe browsing state when leaving the app, per privacy preferences.
