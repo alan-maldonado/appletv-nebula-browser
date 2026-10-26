@@ -117,6 +117,8 @@ function renderField(next) {
     $('fieldInput').placeholder = next.placeholder || '';
     $('fieldInput').value = next.value || '';
     $('fieldSubmit').checked = false;
+    // The address bar has no form to submit.
+    $('fieldSubmit').parentNode.hidden = next.kind === 'address';
     $('fieldCard').hidden = false;
     padRelease();
     $('fieldInput').focus();

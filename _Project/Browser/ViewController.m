@@ -39,6 +39,8 @@ static UIColor *kTextColor(void) {
 @interface BrowserURLInputViewController : UIViewController
 @property (nonatomic, copy) NSString *initialText;
 @property (nonatomic, copy) void (^submitHandler)(NSString *text);
+// Called once when the controller goes away (submitted or cancelled).
+@property (nonatomic, copy) void (^dismissHandler)(void);
 @property (nonatomic) UITextField *textField;
 @property (nonatomic) BOOL didCommit;
 @end
@@ -77,11 +79,33 @@ static UIColor *kTextColor(void) {
     [self.textField becomeFirstResponder];
 }
 
+- (void)viewDidDisappear:(BOOL)animated {
+    [super viewDidDisappear:animated];
+    void (^dismissHandler)(void) = self.dismissHandler;
+    self.dismissHandler = nil;
+    if (dismissHandler != nil) {
+        dismissHandler();
+    }
+}
+
+// Nebula Remote: text typed on the phone/Mac, submitted as if Go was pressed on the TV keyboard.
+- (void)submitRemoteText:(NSString *)text {
+    if (self.didCommit) {
+        return;
+    }
+    self.textField.text = text;
+    [self handleSubmit:self.textField];
+}
+
 - (void)handleSubmit:(UITextField *)textField {
     self.didCommit = YES;
     NSString *text = textField.text;
     void (^handler)(NSString *) = self.submitHandler;
-    [self dismissViewControllerAnimated:NO completion:^{
+    // Dismiss from the presenter: on a remote submit the system keyboard is still
+    // presented on top of this controller, and dismissing from self would only close
+    // the keyboard and leave this invisible controller over the page.
+    UIViewController *presenter = self.presentingViewController ?: self;
+    [presenter dismissViewControllerAnimated:NO completion:^{
         if (handler != nil) {
             handler(text);
         }
@@ -298,6 +322,9 @@ static UIColor *kTextColor(void) {
 @property (nonatomic) BrowserRemoteInputController *remoteInputController;
 @property (nonatomic) BrowserSessionStore *sessionStore;
 @property (nonatomic) BrowserRemoteServer *remoteServer;
+// The "Enter URL or Search" keyboard, published to Nebula Remote while it is up.
+@property (nonatomic, weak) BrowserURLInputViewController *remoteAddressInputViewController;
+@property (nonatomic, copy) NSString *remoteAddressFieldID;
 @property (nonatomic) BrowserTabCoordinator *tabCoordinator;
 @property (nonatomic) BrowserTabOverviewController *tabOverviewController;
 @property (nonatomic) BrowserVideoPlaybackCoordinator *videoPlaybackCoordinator;
@@ -666,6 +693,28 @@ static UIColor *kTextColor(void) {
             [weakSelf.webview loadRequest:request];
         }
     };
+
+    // Nebula Remote: publish the address field so the panel can type into it too.
+    NSString *fieldID = [NSUUID UUID].UUIDString;
+    self.remoteAddressInputViewController = inputViewController;
+    self.remoteAddressFieldID = fieldID;
+    inputViewController.dismissHandler = ^{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (![strongSelf.remoteAddressFieldID isEqualToString:fieldID]) {
+            return;
+        }
+        strongSelf.remoteAddressFieldID = nil;
+        strongSelf.remoteAddressInputViewController = nil;
+        [strongSelf browserPageActionCoordinatorActiveFieldDidChange:nil];
+    };
+    [self browserPageActionCoordinatorActiveFieldDidChange:@{
+        @"id": fieldID,
+        @"title": @"URL o búsqueda",
+        @"type": @"url",
+        @"placeholder": @"URL o búsqueda",
+        @"value": @"",
+        @"kind": @"address",
+    }];
     [self presentViewController:inputViewController animated:NO completion:nil];
 }
 
@@ -1486,6 +1535,14 @@ static UIColor *kTextColor(void) {
 }
 
 - (BOOL)remoteServer:(BrowserRemoteServer *)server submitFieldText:(NSString *)text fieldID:(NSString *)fieldID submitForm:(BOOL)submitForm {
+    if (self.remoteAddressFieldID != nil && [fieldID isEqualToString:self.remoteAddressFieldID]) {
+        BrowserURLInputViewController *inputViewController = self.remoteAddressInputViewController;
+        if (inputViewController == nil) {
+            return NO;
+        }
+        [inputViewController submitRemoteText:text];
+        return YES;
+    }
     return [self.pageActionCoordinator commitRemoteText:text forFieldID:fieldID submitForm:submitForm];
 }
 
