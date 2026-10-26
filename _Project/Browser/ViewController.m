@@ -709,9 +709,9 @@ static UIColor *kTextColor(void) {
     };
     [self browserPageActionCoordinatorActiveFieldDidChange:@{
         @"id": fieldID,
-        @"title": @"URL o búsqueda",
+        @"title": @"URL or search",
         @"type": @"url",
-        @"placeholder": @"URL o búsqueda",
+        @"placeholder": @"URL or search",
         @"value": @"",
         @"kind": @"address",
     }];

@@ -72,11 +72,11 @@ Video:
 Nebula Remote (type from your iPhone or Mac):
 - While Nebula is open, any browser on the same network can control text input: open `http://<your-apple-tv>.local:8080` (Settings → Nebula Remote shows the exact address, e.g. `http://Alans-Apple-TV-4K.local:8080`). On iPhone, Share → Add to Home Screen gives it an app icon.
 - Type a URL or search and choose **Open** (current tab) or **Open in new tab**.
-- Click a text field on the TV and the page asks for it ("Nebula pide…"): type there and send; tick "Enviar formulario" to submit the form.
+- Click a text field on the TV and the page asks for it ("Nebula asks for…"): type there and send; tick "Submit form" to submit the form. Clicking the TV's address bar asks for a URL or search the same way.
 - **Trackpad:** move Nebula's cursor from the panel — on a Mac click the pad to capture the pointer (Esc releases it), click/double-click and scroll with the trackpad; on iPhone drag to move, tap to click, two fingers to scroll. A speed slider adjusts sensitivity per device.
-- **Tabs:** see the TV's tabs live, tap one to switch to it, ✕ to close it, **+ Nueva** for a new tab.
-- **Favoritos:** add a URL or the TV's current page, open (here or in a new tab), edit, reorder (drag on a computer, Subir/Bajar anywhere) and delete. Changes made on the TV show up in the panel too.
-- **Inicio:** set the home page (or use the TV's current page) and whether Nebula opens with the last session or the home page.
+- **Tabs:** see the TV's tabs live, tap one to switch to it, ✕ to close it, **+ New** for a new tab.
+- **Favorites:** add a URL or the TV's current page, open (here or in a new tab), edit, reorder (drag on a computer, Move up/Move down anywhere) and delete. Changes made on the TV show up in the panel too.
+- **Home:** set the home page (or use the TV's current page) and whether Nebula opens with the last session or the home page.
 - Share sheet shortcut (iOS and macOS Shortcuts app): new shortcut → enable "Show in Share Sheet" receiving URLs → action **Get Contents of URL** with URL `http://<your-apple-tv>.local:8080/api/open`, Method **POST**, Request Body **JSON** with `text` = Shortcut Input and `newTab` = true (Boolean).
 - Bookmarklet for any desktop browser (sends the current page to a new TV tab):
   `javascript:window.open('http://<your-apple-tv>.local:8080/?tab=new&open='+encodeURIComponent(location.href))`

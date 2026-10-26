@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -24,79 +24,79 @@
       <g stroke="#fff" stroke-opacity=".85" stroke-width="1.4" stroke-linecap="round"><path d="M53 10v6M50 13h6"/><path d="M10 48v4M8 50h4"/><path d="M50 50v3M48.5 51.5h3"/></g>
     </svg>
     <div class="brand"><span class="wordmark">NEBULA</span><span class="sub">REMOTE</span></div>
-    <div id="status" class="status"><i class="dot"></i><span id="statusText">Conectando…</span></div>
+    <div id="status" class="status"><i class="dot"></i><span id="statusText">Connecting…</span></div>
   </header>
 
   <section id="fieldCard" class="card field" hidden>
-    <p class="ask">Nebula pide<strong id="fieldTitle"></strong></p>
+    <p class="ask">Nebula asks for<strong id="fieldTitle"></strong></p>
     <input id="fieldInput" type="text" autocomplete="off" autocapitalize="off">
-    <label class="check"><input id="fieldSubmit" type="checkbox"> Enviar formulario</label>
-    <button id="fieldSend" class="primary">Enviar a la TV</button>
+    <label class="check"><input id="fieldSubmit" type="checkbox"> Submit form</label>
+    <button id="fieldSend" class="primary">Send to TV</button>
     <div id="fieldToast" class="toast"></div>
   </section>
 
   <nav id="sectionBar" class="section-bar">
-    <button data-section="write" class="active">Escribir</button>
+    <button data-section="write" class="active">Type</button>
     <button data-section="trackpad">Trackpad</button>
     <button data-section="tabs">Tabs <span id="tabCount" class="count"></span></button>
-    <button data-section="favorites">Favoritos</button>
-    <button data-section="home">Inicio</button>
+    <button data-section="favorites">Favorites</button>
+    <button data-section="home">Home</button>
   </nav>
 
   <div class="sections">
     <section id="write" class="card panel active">
-      <h2>Escribir</h2>
-      <input id="openText" type="url" placeholder="URL o búsqueda" autocomplete="off" autocapitalize="off" autocorrect="off">
+      <h2>Type</h2>
+      <input id="openText" type="url" placeholder="URL or search" autocomplete="off" autocapitalize="off" autocorrect="off">
       <div class="row">
-        <button id="openHere" class="primary">Abrir</button>
-        <button id="openTab" class="secondary">Abrir en tab nueva</button>
+        <button id="openHere" class="primary">Open</button>
+        <button id="openTab" class="secondary">Open in new tab</button>
       </div>
       <div id="openToast" class="toast"></div>
     </section>
 
     <section id="trackpad" class="card panel">
-      <div class="panel-head"><h2>Trackpad</h2><span id="padStatus" class="pad-status">Desconectado</span></div>
-      <div id="pad" class="pad" tabindex="0"><span id="padHint">Clic para controlar la TV</span></div>
+      <div class="panel-head"><h2>Trackpad</h2><span id="padStatus" class="pad-status">Disconnected</span></div>
+      <div id="pad" class="pad" tabindex="0"><span id="padHint">Move the mouse here to control the TV</span></div>
       <div class="row pad-controls">
-        <label class="speed">Velocidad <input id="padSpeed" type="range" min="0.5" max="4" step="0.25"></label>
-        <button id="padCapture" class="secondary small">Capturar mouse</button>
-        <button id="padClick" class="secondary small">Clic</button>
-        <button id="padDouble" class="secondary small">Doble clic</button>
+        <label class="speed">Speed <input id="padSpeed" type="range" min="0.5" max="4" step="0.25"></label>
+        <button id="padCapture" class="secondary small">Capture mouse</button>
+        <button id="padClick" class="secondary small">Click</button>
+        <button id="padDouble" class="secondary small">Double click</button>
       </div>
     </section>
 
     <section id="tabs" class="card panel">
-      <div class="panel-head"><h2>Tabs</h2><button id="tabNew" class="secondary small" data-action="tabs/new">+ Nueva</button></div>
+      <div class="panel-head"><h2>Tabs</h2><button id="tabNew" class="secondary small" data-action="tabs/new">+ New</button></div>
       <ul id="tabList" class="list"></ul>
       <div id="tabsToast" class="toast"></div>
     </section>
 
     <section id="favorites" class="card panel">
-      <div class="panel-head"><h2>Favoritos</h2><button id="favAddCurrent" class="secondary small" data-action="favorites/add">+ Página actual</button></div>
+      <div class="panel-head"><h2>Favorites</h2><button id="favAddCurrent" class="secondary small" data-action="favorites/add">+ Current page</button></div>
       <ul id="favList" class="list"></ul>
       <form id="favAddForm" class="add-form">
         <input id="favAddURL" type="url" placeholder="https://…" autocomplete="off" autocapitalize="off" autocorrect="off">
-        <input id="favAddTitle" type="text" placeholder="Nombre (opcional)" autocomplete="off">
-        <button class="secondary" data-action="favorites/add">+ Agregar URL</button>
+        <input id="favAddTitle" type="text" placeholder="Name (optional)" autocomplete="off">
+        <button class="secondary" data-action="favorites/add">+ Add URL</button>
       </form>
       <div id="favToast" class="toast"></div>
     </section>
 
     <section id="home" class="card panel">
-      <h2>Inicio</h2>
-      <label class="field-label" for="homeURL">Página de inicio</label>
+      <h2>Home</h2>
+      <label class="field-label" for="homeURL">Home page</label>
       <input id="homeURL" type="url" placeholder="https://…" autocomplete="off" autocapitalize="off" autocorrect="off">
       <div class="row">
-        <button id="homeUseCurrent" class="secondary" data-action="home">Usar página actual</button>
-        <button id="homeSave" class="primary" data-action="home">Guardar</button>
+        <button id="homeUseCurrent" class="secondary" data-action="home">Use current page</button>
+        <button id="homeSave" class="primary" data-action="home">Save</button>
       </div>
-      <p class="field-label">Al abrir Nebula</p>
-      <label class="radio"><input type="radio" name="launch" value="last-session" data-action="home"> Última sesión</label>
-      <label class="radio"><input type="radio" name="launch" value="home-page" data-action="home"> Página de inicio</label>
+      <p class="field-label">When Nebula opens</p>
+      <label class="radio"><input type="radio" name="launch" value="last-session" data-action="home"> Last session</label>
+      <label class="radio"><input type="radio" name="launch" value="home-page" data-action="home"> Home page</label>
       <div id="homeToast" class="toast"></div>
     </section>
   </div>
-  <footer>Funciona mientras Nebula está abierta en la TV</footer>
+  <footer>Works while Nebula is open on the TV</footer>
 </main>
 <script src="/app.js"></script>
 </body>

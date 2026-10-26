@@ -55,15 +55,15 @@ function post(path, body) {
 }
 
 var ERROR_TEXT = {
-  'tab-not-found': 'Esa tab ya no existe en la TV',
-  'max-tabs': 'La TV ya tiene el máximo de tabs',
-  'favorite-changed': 'Cambió en la TV, actualizado',
-  'invalid-url': 'URL inválida (usa http:// o https://)',
-  'invalid-index': 'Posición inválida',
-  'invalid-launch': 'Opción inválida',
-  'no-current-page': 'La TV no tiene una página abierta',
-  'invalid-request': 'Solicitud inválida',
-  'tv-busy': 'La TV está cerrando una tab, intenta de nuevo'
+  'tab-not-found': 'That tab no longer exists on the TV',
+  'max-tabs': 'The TV already has the maximum number of tabs',
+  'favorite-changed': 'Changed on the TV, refreshed',
+  'invalid-url': 'Invalid URL (use http:// or https://)',
+  'invalid-index': 'Invalid position',
+  'invalid-launch': 'Invalid option',
+  'no-current-page': 'The TV has no page open',
+  'invalid-request': 'Invalid request',
+  'tv-busy': 'The TV is closing a tab, try again'
 };
 
 // POST /api/<action>; reports errors in the section's toast.
@@ -79,7 +79,7 @@ function act(action, payload, toastId, okText) {
     if (code === 'favorite-changed') { favoritesBusy = false; renderFavorites(); }
     return false;
   }).catch(function () {
-    toast(toastId, 'Sin conexión con la TV', true);
+    toast(toastId, 'Not connected to the TV', true);
     return false;
   });
 }
@@ -92,27 +92,27 @@ function sendOpen(newTab) {
   post('/api/open', { text: text, newTab: newTab }).then(function (result) {
     if (result.ok) {
       $('openText').value = '';
-      toast('openToast', newTab ? 'Abierto en tab nueva' : 'Abierto en la TV');
+      toast('openToast', newTab ? 'Opened in a new tab' : 'Opened on the TV');
     } else {
       var code = result.body && result.body.error;
-      toast('openToast', ERROR_TEXT[code] || ('No se pudo abrir (' + result.status + ')'), true);
+      toast('openToast', ERROR_TEXT[code] || ('Could not open (' + result.status + ')'), true);
     }
-  }).catch(function () { toast('openToast', 'Sin conexión con la TV', true); });
+  }).catch(function () { toast('openToast', 'Not connected to the TV', true); });
 }
 
 function sendField() {
   if (!field) { return; }
   padRelockAfterField(); // must run inside the click/Enter gesture, before any await
   post('/api/field', { id: field.id, text: $('fieldInput').value, submit: $('fieldSubmit').checked }).then(function (result) {
-    if (result.ok) { toast('fieldToast', 'Enviado'); }
-    else if (result.status === 409) { toast('fieldToast', 'El campo ya no está activo en la TV', true); }
+    if (result.ok) { toast('fieldToast', 'Sent'); }
+    else if (result.status === 409) { toast('fieldToast', 'That field is no longer active on the TV', true); }
     else { toast('fieldToast', 'Error (' + result.status + ')', true); }
-  }).catch(function () { toast('fieldToast', 'Sin conexión con la TV', true); });
+  }).catch(function () { toast('fieldToast', 'Not connected to the TV', true); });
 }
 
 function renderField(next) {
   if (next && (!field || field.id !== next.id)) {
-    $('fieldTitle').textContent = next.title || next.placeholder || 'Texto';
+    $('fieldTitle').textContent = next.title || next.placeholder || 'Text';
     $('fieldInput').type = INPUT_TYPES.indexOf(next.type) >= 0 ? next.type : 'text';
     $('fieldInput').placeholder = next.placeholder || '';
     $('fieldInput').value = next.value || '';
@@ -134,11 +134,11 @@ function renderTabs() {
   var tabs = state.tabs || [];
   list.textContent = '';
   $('tabCount').textContent = tabs.length ? String(tabs.length) : '';
-  if (!tabs.length) { list.appendChild(el('li', 'empty', 'No hay tabs')); return; }
+  if (!tabs.length) { list.appendChild(el('li', 'empty', 'No tabs')); return; }
   tabs.forEach(function (tab) {
     var item = el('li', tab.active ? 'active' : '');
     var main = el('div', 'main');
-    main.appendChild(el('span', 'title', tab.title || domainOf(tab.url) || 'Nueva tab'));
+    main.appendChild(el('span', 'title', tab.title || domainOf(tab.url) || 'New tab'));
     main.appendChild(el('span', 'domain', domainOf(tab.url)));
     main.onclick = function () { if (!tab.active) { act('tabs/switch', { id: tab.id }, 'tabsToast'); } };
     item.appendChild(main);
@@ -165,29 +165,29 @@ function openFavoriteMenu(item, index, favorite) {
   favoritesBusy = true;
   var actions = el('div', 'actions');
   var count = (state.favorites || []).length;
-  actions.appendChild(button('Editar', 'secondary small', function () { openFavoriteEditor(item, index, favorite); }, 'favorites/update'));
-  actions.appendChild(button('Abrir en tab nueva', 'secondary small', function () {
-    act('favorites/open', favoritePayload(index, favorite, { newTab: true }), 'favToast', 'Abierto en tab nueva').then(closeFavoriteEditors);
+  actions.appendChild(button('Edit', 'secondary small', function () { openFavoriteEditor(item, index, favorite); }, 'favorites/update'));
+  actions.appendChild(button('Open in new tab', 'secondary small', function () {
+    act('favorites/open', favoritePayload(index, favorite, { newTab: true }), 'favToast', 'Opened in a new tab').then(closeFavoriteEditors);
   }, 'favorites/open'));
-  var up = button('Subir', 'secondary small', function () {
+  var up = button('Move up', 'secondary small', function () {
     act('favorites/move', favoritePayload(index, favorite, { to: index - 1 }), 'favToast').then(closeFavoriteEditors);
   }, 'favorites/move');
   up.disabled = up.disabled || index === 0;
   actions.appendChild(up);
-  var down = button('Bajar', 'secondary small', function () {
+  var down = button('Move down', 'secondary small', function () {
     act('favorites/move', favoritePayload(index, favorite, { to: index + 1 }), 'favToast').then(closeFavoriteEditors);
   }, 'favorites/move');
   down.disabled = down.disabled || index === count - 1;
   actions.appendChild(down);
-  actions.appendChild(button('Borrar', 'secondary small', function () {
+  actions.appendChild(button('Delete', 'secondary small', function () {
     actions.textContent = '';
-    actions.appendChild(el('span', 'domain', '¿Borrar?'));
-    actions.appendChild(button('Sí', 'primary small', function () {
-      act('favorites/remove', favoritePayload(index, favorite), 'favToast', 'Borrado').then(closeFavoriteEditors);
+    actions.appendChild(el('span', 'domain', 'Delete?'));
+    actions.appendChild(button('Yes', 'primary small', function () {
+      act('favorites/remove', favoritePayload(index, favorite), 'favToast', 'Deleted').then(closeFavoriteEditors);
     }, 'favorites/remove'));
     actions.appendChild(button('No', 'secondary small', closeFavoriteEditors));
   }, 'favorites/remove'));
-  actions.appendChild(button('Cerrar', 'secondary small', closeFavoriteEditors));
+  actions.appendChild(button('Close', 'secondary small', closeFavoriteEditors));
   item.classList.add('editing');
   item.appendChild(actions);
 }
@@ -196,16 +196,16 @@ function openFavoriteEditor(item, index, favorite) {
   favoritesBusy = true;
   item.textContent = '';
   var editor = el('div', 'editor');
-  var title = el('input'); title.type = 'text'; title.value = favorite.title; title.placeholder = 'Nombre';
+  var title = el('input'); title.type = 'text'; title.value = favorite.title; title.placeholder = 'Name';
   var url = el('input'); url.type = 'url'; url.value = favorite.url; url.placeholder = 'https://…';
   editor.appendChild(title);
   editor.appendChild(url);
   var row = el('div', 'row');
-  row.appendChild(button('Guardar', 'primary small', function () {
-    act('favorites/update', favoritePayload(index, favorite, { title: title.value, newURL: url.value }), 'favToast', 'Guardado')
+  row.appendChild(button('Save', 'primary small', function () {
+    act('favorites/update', favoritePayload(index, favorite, { title: title.value, newURL: url.value }), 'favToast', 'Saved')
       .then(function (ok) { if (ok) { closeFavoriteEditors(); } });
   }, 'favorites/update'));
-  row.appendChild(button('Cerrar', 'secondary small', closeFavoriteEditors));
+  row.appendChild(button('Close', 'secondary small', closeFavoriteEditors));
   editor.appendChild(row);
   item.appendChild(editor);
   title.focus();
@@ -227,7 +227,7 @@ function renderFavorites() {
   renderedFavorites = json;
   var list = $('favList');
   list.textContent = '';
-  if (!favorites.length) { list.appendChild(el('li', 'empty', 'Sin favoritos todavía')); return; }
+  if (!favorites.length) { list.appendChild(el('li', 'empty', 'No favorites yet')); return; }
   var canMove = ENABLED_ACTIONS.indexOf('favorites/move') >= 0;
   favorites.forEach(function (favorite, index) {
     var item = el('li');
@@ -249,10 +249,10 @@ function renderFavorites() {
     var main = el('div', 'main');
     main.appendChild(el('span', 'title', favorite.title));
     main.appendChild(el('span', 'domain', domainOf(favorite.url)));
-    main.onclick = function () { act('favorites/open', favoritePayload(index, favorite, { newTab: false }), 'favToast', 'Abierto en la TV'); };
+    main.onclick = function () { act('favorites/open', favoritePayload(index, favorite, { newTab: false }), 'favToast', 'Opened on the TV'); };
     item.appendChild(main);
-    item.appendChild(button('Abrir', 'primary small', function () {
-      act('favorites/open', favoritePayload(index, favorite, { newTab: false }), 'favToast', 'Abierto en la TV');
+    item.appendChild(button('Open', 'primary small', function () {
+      act('favorites/open', favoritePayload(index, favorite, { newTab: false }), 'favToast', 'Opened on the TV');
     }, 'favorites/open'));
     item.appendChild(button('⋯', 'icon', function () {
       if (item.classList.contains('editing')) { closeFavoriteEditors(); } else { openFavoriteMenu(item, index, favorite); }
@@ -287,7 +287,7 @@ function loadPadSpeed() {
 }
 
 function padStatus(connected) {
-  $('padStatus').textContent = connected ? 'Conectado' : 'Desconectado';
+  $('padStatus').textContent = connected ? 'Connected' : 'Disconnected';
   $('padStatus').className = connected ? 'pad-status on' : 'pad-status';
 }
 
@@ -372,8 +372,8 @@ function padRelockAfterField() {
 function setupPad() {
   var area = $('pad');
   loadPadSpeed();
-  var hoverHint = 'Mueve el mouse aquí para mover el cursor de la TV · clic = clic · dos dedos = scroll';
-  $('padHint').textContent = TOUCH ? 'Arrastra para mover el cursor · toca para hacer clic · dos dedos para scroll' : hoverHint;
+  var hoverHint = 'Move the mouse here to move the TV cursor · click = click · two fingers = scroll';
+  $('padHint').textContent = TOUCH ? 'Drag to move the cursor · tap to click · two fingers to scroll' : hoverHint;
   if (TOUCH) { $('padCapture').hidden = true; } else { area.classList.add('hover-mode'); }
   $('padCapture').onclick = function () { area.requestPointerLock(); };
   $('padSpeed').oninput = function () { try { localStorage.setItem(SPEED_KEY, $('padSpeed').value); } catch (e) {} };
@@ -405,8 +405,8 @@ function setupPad() {
   document.addEventListener('pointerlockchange', function () {
     var locked = padLocked();
     area.classList.toggle('locked', locked);
-    $('padCapture').textContent = locked ? 'Esc para soltar' : 'Capturar mouse';
-    if (!TOUCH) { $('padHint').textContent = locked ? 'Mouse capturado · Esc para soltar' : hoverHint; }
+    $('padCapture').textContent = locked ? 'Esc to release' : 'Capture mouse';
+    if (!TOUCH) { $('padHint').textContent = locked ? 'Mouse captured · Esc to release' : hoverHint; }
   });
 
   // iPhone / touch: 1 finger moves, tap clicks, double tap double-clicks, 2 fingers scroll.
@@ -466,7 +466,7 @@ function render(next) {
   if (theme.accent) { document.documentElement.style.setProperty('--accent', theme.accent); }
   if (theme.onAccent) { document.documentElement.style.setProperty('--on-accent', theme.onAccent); }
   var page = state.page || {};
-  status(page.title ? ('En la TV: ' + page.title) : 'Conectado a la TV', false);
+  status(page.title ? ('On the TV: ' + page.title) : 'Connected to the TV', false);
   renderField(state.field);
   renderTabs();
   renderFavorites();
@@ -479,7 +479,7 @@ function poll() {
     .then(function (next) { failures = 0; version = next.v; render(next); poll(); })
     .catch(function () {
       failures++;
-      status('Sin conexión con la TV', true);
+      status('Not connected to the TV', true);
       version = 0;
       setTimeout(poll, Math.min(5000, 1000 * failures));
     });
@@ -509,18 +509,18 @@ $('openText').onkeydown = function (event) { if (event.key === 'Enter') { sendOp
 $('fieldSend').onclick = sendField;
 $('fieldInput').onkeydown = function (event) { if (event.key === 'Enter') { sendField(); } };
 
-$('tabNew').onclick = function () { act('tabs/new', {}, 'tabsToast', 'Tab nueva abierta'); };
-$('favAddCurrent').onclick = function () { act('favorites/add', { current: true }, 'favToast', 'Agregado'); };
+$('tabNew').onclick = function () { act('tabs/new', {}, 'tabsToast', 'New tab opened'); };
+$('favAddCurrent').onclick = function () { act('favorites/add', { current: true }, 'favToast', 'Added'); };
 $('favAddForm').onsubmit = function (event) {
   event.preventDefault();
-  act('favorites/add', { url: $('favAddURL').value, title: $('favAddTitle').value }, 'favToast', 'Agregado').then(function (ok) {
+  act('favorites/add', { url: $('favAddURL').value, title: $('favAddTitle').value }, 'favToast', 'Added').then(function (ok) {
     if (ok) { $('favAddURL').value = ''; $('favAddTitle').value = ''; }
   });
 };
-$('homeUseCurrent').onclick = function () { act('home', { useCurrent: true }, 'homeToast', 'Página de inicio actualizada'); };
-$('homeSave').onclick = function () { act('home', { url: $('homeURL').value }, 'homeToast', 'Guardado'); };
+$('homeUseCurrent').onclick = function () { act('home', { useCurrent: true }, 'homeToast', 'Home page updated'); };
+$('homeSave').onclick = function () { act('home', { url: $('homeURL').value }, 'homeToast', 'Saved'); };
 document.querySelectorAll('input[name=launch]').forEach(function (radio) {
-  radio.onchange = function () { act('home', { launch: radio.value }, 'homeToast', 'Guardado'); };
+  radio.onchange = function () { act('home', { launch: radio.value }, 'homeToast', 'Saved'); };
 });
 
 applyEnabledActions();
@@ -530,11 +530,11 @@ setupPad();
 var params = new URLSearchParams(location.search);
 if (params.get('open')) {
   history.replaceState(null, '', '/');
-  status('Enviando a la TV…', false);
+  status('Sending to the TV…', false);
   post('/api/open', { text: params.get('open'), newTab: params.get('tab') === 'new' }).then(function (result) {
-    status(result.ok ? 'Enviado a la TV' : 'No se pudo enviar (' + result.status + ')', !result.ok);
+    status(result.ok ? 'Sent to the TV' : 'Could not send (' + result.status + ')', !result.ok);
     if (result.ok) { setTimeout(function () { window.close(); }, 1200); }
-  }).catch(function () { status('Sin conexión con la TV', true); });
+  }).catch(function () { status('Not connected to the TV', true); });
 } else {
   poll();
 }
