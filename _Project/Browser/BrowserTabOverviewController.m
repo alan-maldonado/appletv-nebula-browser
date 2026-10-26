@@ -211,7 +211,7 @@ static CGFloat const kTabCardURLHeight = 64.0;
 @property (nonatomic) UICollectionView *collectionView;
 @property (nonatomic) UILabel *footerLabel;
 @property (nonatomic) NSInteger preferredFocusItemIndex;
-@property (nonatomic) BOOL closeAnimationInProgress;
+@property (nonatomic, readwrite) BOOL closeAnimationInProgress;
 
 @end
 

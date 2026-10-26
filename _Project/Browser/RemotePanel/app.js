@@ -62,7 +62,8 @@ var ERROR_TEXT = {
   'invalid-index': 'Posición inválida',
   'invalid-launch': 'Opción inválida',
   'no-current-page': 'La TV no tiene una página abierta',
-  'invalid-request': 'Solicitud inválida'
+  'invalid-request': 'Solicitud inválida',
+  'tv-busy': 'La TV está cerrando una tab, intenta de nuevo'
 };
 
 // POST /api/<action>; reports errors in the section's toast.
@@ -93,7 +94,8 @@ function sendOpen(newTab) {
       $('openText').value = '';
       toast('openToast', newTab ? 'Abierto en tab nueva' : 'Abierto en la TV');
     } else {
-      toast('openToast', 'No se pudo abrir (' + result.status + ')', true);
+      var code = result.body && result.body.error;
+      toast('openToast', ERROR_TEXT[code] || ('No se pudo abrir (' + result.status + ')'), true);
     }
   }).catch(function () { toast('openToast', 'Sin conexión con la TV', true); });
 }
@@ -151,7 +153,8 @@ function favoritePayload(index, favorite, extra) {
 
 function closeFavoriteEditors() {
   favoritesBusy = false;
-  renderFavorites();
+  renderedFavorites = null;
+  if (state) { renderFavorites(); }
 }
 
 function openFavoriteMenu(item, index, favorite) {
@@ -206,10 +209,19 @@ function openFavoriteEditor(item, index, favorite) {
 
 var dragIndex = null;
 
+var renderedFavorites = null; // JSON of the list last drawn
+
 function renderFavorites() {
-  if (favoritesBusy) { return; }
-  var list = $('favList');
   var favorites = state.favorites || [];
+  var json = JSON.stringify(favorites);
+  if (favoritesBusy) {
+    if (json === renderedFavorites) { return; } // keep the open menu/editor
+    // The list really changed (e.g. on the TV): the open editor points at stale data.
+    favoritesBusy = false;
+    toast('favToast', ERROR_TEXT['favorite-changed'], true);
+  }
+  renderedFavorites = json;
+  var list = $('favList');
   list.textContent = '';
   if (!favorites.length) { list.appendChild(el('li', 'empty', 'Sin favoritos todavía')); return; }
   var canMove = ENABLED_ACTIONS.indexOf('favorites/move') >= 0;
@@ -227,7 +239,7 @@ function renderFavorites() {
         item.classList.remove('drop-target');
         if (dragIndex === null || dragIndex === index) { return; }
         var from = dragIndex;
-        act('favorites/move', favoritePayload(from, favorites[from], { to: index }), 'favToast');
+        act('favorites/move', favoritePayload(from, favorites[from], { to: index }), 'favToast').then(closeFavoriteEditors);
       };
     }
     var main = el('div', 'main');
@@ -287,6 +299,8 @@ function poll() {
 }
 
 function showSection(name) {
+  // Leaving the section closes any open favorite menu/editor so the list never stays frozen.
+  if (favoritesBusy) { closeFavoriteEditors(); }
   document.querySelectorAll('#sectionBar button').forEach(function (node) {
     node.classList.toggle('active', node.getAttribute('data-section') === name);
   });

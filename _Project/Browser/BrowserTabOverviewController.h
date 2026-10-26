@@ -21,6 +21,8 @@ NS_ASSUME_NONNULL_BEGIN
 @interface BrowserTabOverviewController : NSObject
 
 @property (nonatomic, readonly, getter=isVisible) BOOL visible;
+// YES during the swipe-to-close animation, when the tab list must not change underneath.
+@property (nonatomic, readonly) BOOL closeAnimationInProgress;
 
 - (instancetype)initWithHost:(id<BrowserTabOverviewControllerHost>)host
                    viewModel:(BrowserViewModel *)viewModel

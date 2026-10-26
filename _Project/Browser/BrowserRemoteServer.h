@@ -8,7 +8,11 @@ NS_ASSUME_NONNULL_BEGIN
 // All delegate methods are called on the main queue.
 @protocol BrowserRemoteServerDelegate <NSObject>
 
-- (void)remoteServer:(BrowserRemoteServer *)server openText:(NSString *)text inNewTab:(BOOL)newTab;
+// Returns the HTTP status; *outResponse is the JSON body (nil means {"ok":true}).
+- (NSInteger)remoteServer:(BrowserRemoteServer *)server
+                 openText:(NSString *)text
+                 inNewTab:(BOOL)newTab
+                 response:(NSDictionary * _Nullable * _Nonnull)outResponse;
 // Return NO when fieldID is not the active field (server answers 409).
 - (BOOL)remoteServer:(BrowserRemoteServer *)server submitFieldText:(NSString *)text fieldID:(NSString *)fieldID submitForm:(BOOL)submitForm;
 // Admin panel actions (tabs/…, favorites/…, home) with a payload already validated by

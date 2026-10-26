@@ -256,8 +256,9 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
             return;
         }
         [self onMain:client respond:^NSData *{
-            [self.delegate remoteServer:self openText:text inNewTab:newTab];
-            return BrowserRemoteJSONResponseData(200, @{@"ok": @YES});
+            NSDictionary *response = nil;
+            NSInteger status = [self.delegate remoteServer:self openText:text inNewTab:newTab response:&response];
+            return BrowserRemoteJSONResponseData(status, response ?: @{@"ok": @YES});
         }];
     } else if (![request.path isEqualToString:@"/api/field"]) {
         // Admin actions: validated here, executed by the delegate on the main queue.

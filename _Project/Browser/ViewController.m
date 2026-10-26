@@ -1388,17 +1388,7 @@ static UIColor *kTextColor(void) {
         *outResponse = @{@"error": @"invalid-url"};
         return 400;
     }
-    if (newTab && self.viewModel.tabs.count >= [BrowserViewModel maximumTabCount]) {
-        *outResponse = @{@"error": @"max-tabs"};
-        return 409;
-    }
-    [self.pageActionCoordinator discardActiveEditableField];
-    if (newTab) {
-        [self.tabCoordinator createNewTabWithRequest:request];
-    } else {
-        [self.webview loadRequest:request];
-    }
-    return 200;
+    return [self loadRemoteRequest:request inNewTab:newTab response:outResponse];
 }
 
 - (NSInteger)performRemoteTabAction:(NSString *)action payload:(NSDictionary *)payload response:(NSDictionary **)outResponse {
@@ -1407,9 +1397,10 @@ static UIColor *kTextColor(void) {
             *outResponse = @{@"error": @"max-tabs"};
             return 409; // the panel reports it; no alert on the TV
         }
-        [self.pageActionCoordinator discardActiveEditableField];
-        [self.tabCoordinator createNewTabLoadingHomePage:YES];
-        return 200;
+        return [self performRemoteTabListChange:^{
+            [self.pageActionCoordinator discardActiveEditableField];
+            [self.tabCoordinator createNewTabLoadingHomePage:YES];
+        } response:outResponse];
     }
 
     NSInteger index = [self.tabCoordinator indexOfTabWithIdentifier:payload[@"id"]];
@@ -1417,26 +1408,56 @@ static UIColor *kTextColor(void) {
         *outResponse = @{@"error": @"tab-not-found"};
         return 404;
     }
-    [self.pageActionCoordinator discardActiveEditableField];
-    if ([action isEqualToString:@"tabs/switch"]) {
-        [self.tabCoordinator switchToTabAtIndex:index];
-    } else {
-        [self.tabCoordinator closeTabAtIndex:index];
+    return [self performRemoteTabListChange:^{
+        [self.pageActionCoordinator discardActiveEditableField];
+        if ([action isEqualToString:@"tabs/switch"]) {
+            [self.tabCoordinator switchToTabAtIndex:index];
+        } else {
+            [self.tabCoordinator closeTabAtIndex:index];
+        }
+    } response:outResponse];
+}
+
+- (NSInteger)remoteServer:(BrowserRemoteServer *)server
+                 openText:(NSString *)text
+                 inNewTab:(BOOL)newTab
+                 response:(NSDictionary **)outResponse {
+    NSURLRequest *request = [self.navigationService requestForURLOrSearchString:text];
+    if (request == nil) {
+        *outResponse = @{@"error": @"invalid-request"};
+        return 400;
+    }
+    return [self loadRemoteRequest:request inNewTab:newTab response:outResponse];
+}
+
+// Every remote change to the tab list goes through here: the TV's tab overview caches
+// its item count, so it must not change mid close-animation and must reload afterwards.
+- (NSInteger)performRemoteTabListChange:(void (^)(void))change response:(NSDictionary **)outResponse {
+    if (self.tabOverviewController.visible && self.tabOverviewController.closeAnimationInProgress) {
+        *outResponse = @{@"error": @"tv-busy"};
+        return 409;
+    }
+    change();
+    if (self.tabOverviewController.visible) {
+        [self.tabOverviewController reload];
     }
     return 200;
 }
 
-- (void)remoteServer:(BrowserRemoteServer *)server openText:(NSString *)text inNewTab:(BOOL)newTab {
-    NSURLRequest *request = [self.navigationService requestForURLOrSearchString:text];
-    if (request == nil) {
-        return;
-    }
-    [self.pageActionCoordinator discardActiveEditableField];
-    if (newTab) {
-        [self.tabCoordinator createNewTabWithRequest:request];
-    } else {
+- (NSInteger)loadRemoteRequest:(NSURLRequest *)request inNewTab:(BOOL)newTab response:(NSDictionary **)outResponse {
+    if (!newTab) {
+        [self.pageActionCoordinator discardActiveEditableField];
         [self.webview loadRequest:request];
+        return 200;
     }
+    if (self.viewModel.tabs.count >= [BrowserViewModel maximumTabCount]) {
+        *outResponse = @{@"error": @"max-tabs"};
+        return 409; // the panel reports it; no alert on the TV
+    }
+    return [self performRemoteTabListChange:^{
+        [self.pageActionCoordinator discardActiveEditableField];
+        [self.tabCoordinator createNewTabWithRequest:request];
+    } response:outResponse];
 }
 
 - (BOOL)remoteServer:(BrowserRemoteServer *)server submitFieldText:(NSString *)text fieldID:(NSString *)fieldID submitForm:(BOOL)submitForm {
