@@ -4,6 +4,7 @@
 #import "BrowserFavoritesStore.h"
 #import "BrowserRemoteHTTP.h"
 #import "BrowserRemoteState.h"
+#import "BrowserRemoteWebSocket.h"
 
 static NSMutableArray<NSString *> *sFailures;
 
@@ -307,6 +308,125 @@ static void testHomePayload(void) {
     EXPECT([url[@"url"] isEqualToString:@"https://www.google.com"], @"url %@", url);
 }
 
+static NSData *Hex(NSString *hex) {
+    NSMutableData *data = [NSMutableData data];
+    for (NSString *pair in [hex componentsSeparatedByString:@" "]) {
+        unsigned value = 0;
+        [[NSScanner scannerWithString:pair] scanHexInt:&value];
+        uint8_t byte = (uint8_t)value;
+        [data appendBytes:&byte length:1];
+    }
+    return data;
+}
+
+// A client frame: FIN + opcode, masked with a fixed key (finalBit NO → fragment).
+static NSData *MaskedFrame(uint8_t opcode, NSData *payload, BOOL finalBit) {
+    NSMutableData *frame = [NSMutableData data];
+    uint8_t first = (uint8_t)((finalBit ? 0x80 : 0x00) | opcode);
+    [frame appendBytes:&first length:1];
+    if (payload.length < 126) {
+        uint8_t length = (uint8_t)(0x80 | payload.length);
+        [frame appendBytes:&length length:1];
+    } else {
+        uint8_t length[3] = {0x80 | 126, (uint8_t)(payload.length >> 8), (uint8_t)(payload.length & 0xff)};
+        [frame appendBytes:length length:3];
+    }
+    uint8_t mask[4] = {0x11, 0x22, 0x33, 0x44};
+    [frame appendBytes:mask length:4];
+    const uint8_t *bytes = payload.bytes;
+    for (NSUInteger index = 0; index < payload.length; index++) {
+        uint8_t masked = bytes[index] ^ mask[index % 4];
+        [frame appendBytes:&masked length:1];
+    }
+    return frame;
+}
+
+static void testWebSocketAcceptMatchesRFC(void) {
+    NSString *accept = BrowserRemoteWebSocketAccept(@"dGhlIHNhbXBsZSBub25jZQ==");
+    EXPECT([accept isEqualToString:@"s3pPLMBiTxaQ9kYGzzhZRbK+xOo="], @"accept %@", accept);
+}
+
+static void testDetectsUpgrade(void) {
+    NSString *base = @"GET /api/trackpad HTTP/1.1\r\nHost: localhost\r\nUpgrade: WebSocket\r\nConnection: keep-alive, Upgrade\r\n";
+    EXPECT(BrowserRemoteRequestIsWebSocketUpgrade(ParsedRequest([base stringByAppendingString:@"Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: x\r\n\r\n"])), @"valid upgrade rejected");
+    EXPECT(!BrowserRemoteRequestIsWebSocketUpgrade(ParsedRequest([base stringByAppendingString:@"Sec-WebSocket-Version: 13\r\n\r\n"])), @"missing key accepted");
+    EXPECT(!BrowserRemoteRequestIsWebSocketUpgrade(ParsedRequest([base stringByAppendingString:@"Sec-WebSocket-Version: 8\r\nSec-WebSocket-Key: x\r\n\r\n"])), @"version 8 accepted");
+    NSString *post = [[base stringByReplacingOccurrencesOfString:@"GET" withString:@"POST"] stringByAppendingString:@"Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: x\r\n\r\n"];
+    EXPECT(!BrowserRemoteRequestIsWebSocketUpgrade(ParsedRequest(post)), @"POST accepted");
+}
+
+static void testDecodesRFCMaskedHello(void) {
+    BrowserRemoteFrame *frame = nil;
+    NSUInteger consumed = 0;
+    BrowserRemoteFrameStatus status = BrowserRemoteDecodeFrame(Hex(@"81 85 37 fa 21 3d 7f 9f 4d 51 58"), &frame, &consumed);
+    NSString *text = [[NSString alloc] initWithData:frame.payload encoding:NSUTF8StringEncoding];
+    EXPECT(status == BrowserRemoteFrameStatusFrame && frame.opcode == 1 && [text isEqualToString:@"Hello"] && consumed == 11,
+           @"status %ld opcode %d text %@ consumed %lu", (long)status, frame.opcode, text, (unsigned long)consumed);
+}
+
+static void testDecodes16BitLength(void) {
+    NSMutableData *payload = [NSMutableData dataWithLength:200];
+    memset(payload.mutableBytes, 'a', 200);
+    BrowserRemoteFrame *frame = nil;
+    NSUInteger consumed = 0;
+    BrowserRemoteFrameStatus status = BrowserRemoteDecodeFrame(MaskedFrame(1, payload, YES), &frame, &consumed);
+    EXPECT(status == BrowserRemoteFrameStatusFrame && [frame.payload isEqualToData:payload] && consumed == 2 + 2 + 4 + 200,
+           @"status %ld length %lu consumed %lu", (long)status, (unsigned long)frame.payload.length, (unsigned long)consumed);
+}
+
+static void testIncompleteAndTwoFrames(void) {
+    NSData *hello = Hex(@"81 85 37 fa 21 3d 7f 9f 4d 51 58");
+    BrowserRemoteFrame *frame = nil;
+    NSUInteger consumed = 0;
+    EXPECT(BrowserRemoteDecodeFrame([hello subdataWithRange:NSMakeRange(0, 6)], &frame, &consumed) == BrowserRemoteFrameStatusIncomplete, @"partial not incomplete");
+    NSMutableData *two = [hello mutableCopy];
+    [two appendData:hello];
+    EXPECT(BrowserRemoteDecodeFrame(two, &frame, &consumed) == BrowserRemoteFrameStatusFrame && consumed == 11, @"first of two consumed %lu", (unsigned long)consumed);
+    NSData *rest = [two subdataWithRange:NSMakeRange(consumed, two.length - consumed)];
+    BrowserRemoteFrameStatus second = BrowserRemoteDecodeFrame(rest, &frame, &consumed);
+    NSString *text = [[NSString alloc] initWithData:frame.payload encoding:NSUTF8StringEncoding];
+    EXPECT(second == BrowserRemoteFrameStatusFrame && [text isEqualToString:@"Hello"], @"second %ld %@", (long)second, text);
+}
+
+static void testRejectsUnmaskedBinaryFragmented(void) {
+    BrowserRemoteFrame *frame = nil;
+    NSUInteger consumed = 0;
+    NSData *hello = [@"Hello" dataUsingEncoding:NSUTF8StringEncoding];
+    EXPECT(BrowserRemoteDecodeFrame(Hex(@"81 05 48 65 6c 6c 6f"), &frame, &consumed) == BrowserRemoteFrameStatusProtocolError, @"unmasked accepted");
+    EXPECT(BrowserRemoteDecodeFrame(MaskedFrame(2, hello, YES), &frame, &consumed) == BrowserRemoteFrameStatusProtocolError, @"binary accepted");
+    EXPECT(BrowserRemoteDecodeFrame(MaskedFrame(1, hello, NO), &frame, &consumed) == BrowserRemoteFrameStatusProtocolError, @"fragment accepted");
+    EXPECT(BrowserRemoteDecodeFrame(Hex(@"81 ff 00 00 00 00 00 00 00 05"), &frame, &consumed) == BrowserRemoteFrameStatusProtocolError, @"64-bit length accepted");
+}
+
+static void testRejectsOversizedPayload(void) {
+    BrowserRemoteFrame *frame = nil;
+    NSUInteger consumed = 0;
+    BrowserRemoteFrameStatus status = BrowserRemoteDecodeFrame(Hex(@"81 fe 04 01 11 22 33 44"), &frame, &consumed);
+    EXPECT(status == BrowserRemoteFrameStatusTooLarge, @"status %ld", (long)status);
+}
+
+static void testEncodesCloseAndPong(void) {
+    EXPECT([BrowserRemoteCloseFrame(1002) isEqualToData:Hex(@"88 02 03 ea")], @"close %@", BrowserRemoteCloseFrame(1002));
+    NSData *pong = BrowserRemoteEncodeFrame(10, [@"hi" dataUsingEncoding:NSUTF8StringEncoding]);
+    EXPECT([pong isEqualToData:Hex(@"8a 02 68 69")], @"pong %@", pong);
+}
+
+static BrowserRemoteTrackpadKind ParseMessage(NSString *json, double *dx, double *dy) {
+    return BrowserRemoteParseTrackpadMessage([json dataUsingEncoding:NSUTF8StringEncoding], dx, dy);
+}
+
+static void testParsesTrackpadMessages(void) {
+    double dx = 0, dy = 0;
+    EXPECT(ParseMessage(@"{\"t\":\"m\",\"dx\":3,\"dy\":-1}", &dx, &dy) == BrowserRemoteTrackpadKindMove && dx == 3 && dy == -1, @"move %f %f", dx, dy);
+    EXPECT(ParseMessage(@"{\"t\":\"s\",\"dx\":0,\"dy\":40}", &dx, &dy) == BrowserRemoteTrackpadKindScroll && dy == 40, @"scroll %f", dy);
+    EXPECT(ParseMessage(@"{\"t\":\"c\"}", &dx, &dy) == BrowserRemoteTrackpadKindClick, @"click");
+    EXPECT(ParseMessage(@"{\"t\":\"d\"}", &dx, &dy) == BrowserRemoteTrackpadKindDoubleClick, @"double");
+    EXPECT(ParseMessage(@"{\"t\":\"m\",\"dx\":9999,\"dy\":-9999}", &dx, &dy) == BrowserRemoteTrackpadKindMove && dx == 500 && dy == -500, @"clamp %f %f", dx, dy);
+    EXPECT(ParseMessage(@"{\"t\":\"x\"}", &dx, &dy) == BrowserRemoteTrackpadKindNone, @"unknown type");
+    EXPECT(ParseMessage(@"nope", &dx, &dy) == BrowserRemoteTrackpadKindNone, @"bad json");
+    EXPECT(ParseMessage(@"{\"t\":\"m\",\"dx\":\"a\"}", &dx, &dy) == BrowserRemoteTrackpadKindNone, @"string delta");
+}
+
 int main(void) {
     @autoreleasepool {
         sFailures = [NSMutableArray array];
@@ -336,6 +456,15 @@ int main(void) {
             {"testWebURLValidation", testWebURLValidation},
             {"testFavoritePayloads", testFavoritePayloads},
             {"testHomePayload", testHomePayload},
+            {"testWebSocketAcceptMatchesRFC", testWebSocketAcceptMatchesRFC},
+            {"testDetectsUpgrade", testDetectsUpgrade},
+            {"testDecodesRFCMaskedHello", testDecodesRFCMaskedHello},
+            {"testDecodes16BitLength", testDecodes16BitLength},
+            {"testIncompleteAndTwoFrames", testIncompleteAndTwoFrames},
+            {"testRejectsUnmaskedBinaryFragmented", testRejectsUnmaskedBinaryFragmented},
+            {"testRejectsOversizedPayload", testRejectsOversizedPayload},
+            {"testEncodesCloseAndPong", testEncodesCloseAndPong},
+            {"testParsesTrackpadMessages", testParsesTrackpadMessages},
         };
         int failed = 0;
         size_t count = sizeof(tests) / sizeof(tests[0]);

@@ -24,6 +24,7 @@
 		A1B49A4E2D680900001D58A1 /* BrowserNavigationService.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49A4D2D680900001D58A1 /* BrowserNavigationService.m */; };
 		A1B49A552D68143D001D58A1 /* BrowserMenuCoordinator.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49A542D68143D001D58A1 /* BrowserMenuCoordinator.m */; };
 		A1B49A582D6828D4001D58A1 /* BrowserSessionStore.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49A572D6828D4001D58A1 /* BrowserSessionStore.m */; };
+		C8E6A7DE083EB4060700DD66 /* BrowserRemoteWebSocket.m in Sources */ = {isa = PBXBuildFile; fileRef = 65B03504A6F6F74D93CE4AD0 /* BrowserRemoteWebSocket.m */; };
 		995152AA2C8285EB910242FF /* BrowserFavoritesStore.m in Sources */ = {isa = PBXBuildFile; fileRef = CD7A29C6462B082506A562CF /* BrowserFavoritesStore.m */; };
 		64EB2A74F165CDBB37B6F27B /* BrowserRemoteState.m in Sources */ = {isa = PBXBuildFile; fileRef = 52BE2AC21FA180B27E3B3F0B /* BrowserRemoteState.m */; };
 		9513EDCA7E17D5897059AFE2 /* BrowserRemoteHTTP.m in Sources */ = {isa = PBXBuildFile; fileRef = FE0B87D2591E3AC1E55C65EE /* BrowserRemoteHTTP.m */; };
@@ -73,6 +74,8 @@
 		A1B49A542D68143D001D58A1 /* BrowserMenuCoordinator.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserMenuCoordinator.m; sourceTree = "<group>"; };
 		A1B49A562D6828D4001D58A1 /* BrowserSessionStore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BrowserSessionStore.h; sourceTree = "<group>"; };
 		A1B49A572D6828D4001D58A1 /* BrowserSessionStore.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserSessionStore.m; sourceTree = "<group>"; };
+		B50BAB7EFF7564763838827C /* BrowserRemoteWebSocket.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BrowserRemoteWebSocket.h; sourceTree = "<group>"; };
+		65B03504A6F6F74D93CE4AD0 /* BrowserRemoteWebSocket.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserRemoteWebSocket.m; sourceTree = "<group>"; };
 		D016B3DDFB822BDC02328B41 /* BrowserFavoritesStore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BrowserFavoritesStore.h; sourceTree = "<group>"; };
 		CD7A29C6462B082506A562CF /* BrowserFavoritesStore.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserFavoritesStore.m; sourceTree = "<group>"; };
 		230100AB7EBF2107EE6A090D /* BrowserRemoteState.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BrowserRemoteState.h; sourceTree = "<group>"; };
@@ -217,6 +220,8 @@
 				A1B49A882D700000001D58A1 /* BrowserPreferencesStore.m */,
 				A1B49A562D6828D4001D58A1 /* BrowserSessionStore.h */,
 				A1B49A572D6828D4001D58A1 /* BrowserSessionStore.m */,
+				B50BAB7EFF7564763838827C /* BrowserRemoteWebSocket.h */,
+				65B03504A6F6F74D93CE4AD0 /* BrowserRemoteWebSocket.m */,
 				D016B3DDFB822BDC02328B41 /* BrowserFavoritesStore.h */,
 				CD7A29C6462B082506A562CF /* BrowserFavoritesStore.m */,
 				230100AB7EBF2107EE6A090D /* BrowserRemoteState.h */,
@@ -436,6 +441,7 @@
 				A1B49A4E2D680900001D58A1 /* BrowserNavigationService.m in Sources */,
 				A1B49A892D700000001D58A1 /* BrowserPreferencesStore.m in Sources */,
 				A1B49A582D6828D4001D58A1 /* BrowserSessionStore.m in Sources */,
+				C8E6A7DE083EB4060700DD66 /* BrowserRemoteWebSocket.m in Sources */,
 				995152AA2C8285EB910242FF /* BrowserFavoritesStore.m in Sources */,
 				64EB2A74F165CDBB37B6F27B /* BrowserRemoteState.m in Sources */,
 				9513EDCA7E17D5897059AFE2 /* BrowserRemoteHTTP.m in Sources */,
