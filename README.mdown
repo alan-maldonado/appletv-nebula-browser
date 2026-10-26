@@ -69,8 +69,17 @@ Video:
 - Full screen player: press Right to fast-forward at 2x → 32x, Left to slow down, Play/Pause to resume from that point. Left/Right while paused skip ±10s. Swipe to scrub (quick swipes accelerate). Back cancels a fast-forward/scrub and returns to where you were. Videos resume where you left off.
 - A "Full Screen Player" option in Settings can make videos always open in the built-in player instead of inline.
 
+Nebula Remote (type from your iPhone or Mac):
+- While Nebula is open, any browser on the same network can control text input: open `http://<your-apple-tv>.local:8080` (Settings → Nebula Remote shows the exact address, e.g. `http://Alans-Apple-TV-4K.local:8080`). On iPhone, Share → Add to Home Screen gives it an app icon.
+- Type a URL or search and choose **Open** (current tab) or **Open in new tab**.
+- Click a text field on the TV and the page asks for it ("Nebula pide…"): type there and send; tick "Enviar formulario" to submit the form.
+- Share sheet shortcut (iOS and macOS Shortcuts app): new shortcut → enable "Show in Share Sheet" receiving URLs → action **Get Contents of URL** with URL `http://<your-apple-tv>.local:8080/api/open`, Method **POST**, Request Body **JSON** with `text` = Shortcut Input and `newTab` = true (Boolean).
+- Bookmarklet for any desktop browser (sends the current page to a new TV tab):
+  `javascript:window.open('http://<your-apple-tv>.local:8080/?tab=new&open='+encodeURIComponent(location.href))`
+- Only works while Nebula is in the foreground; anyone on your Wi-Fi can use it, so turn it off in Settings if you don't want that.
+
 Settings (Side menu) include:
-- Navigation: home page, favorites, history, tabs, new tab, arrow shortcuts on/off.
+- Navigation: home page, favorites, history, tabs, new tab, arrow shortcuts on/off, Nebula Remote on/off.
 - Appearance: accent theme, top navigation bar, page scaling, font size.
 - Video Playback: full screen player, player time display (remaining / total).
 - Search: search engine (Google, Bing, DuckDuckGo, Yahoo, Ecosia, Brave, Startpage).

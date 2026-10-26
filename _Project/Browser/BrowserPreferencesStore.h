@@ -21,6 +21,8 @@ NS_ASSUME_NONNULL_BEGIN
 // Double-pressing the arrow keys triggers shortcuts (tabs/history/favorites/new
 // tab). Defaults to YES.
 @property (nonatomic) BOOL arrowDoubleTapShortcutsEnabled;
+// Nebula Remote HTTP server (type from iPhone/Mac). Default YES.
+@property (nonatomic) BOOL remoteServerEnabled;
 // How many times the "Settings is in the Quick Menu" tip has been shown while
 // the top bar is hidden (capped at 3 — see ViewController).
 @property (nonatomic) NSUInteger settingsHintShownCount;

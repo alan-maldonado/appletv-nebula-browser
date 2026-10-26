@@ -1383,6 +1383,37 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
     return item;
 }
 
+- (BrowserAdvancedMenuItem *)remoteServerToggleMenuItem {
+    NSString *(^titleForState)(BOOL) = ^NSString *(BOOL enabled) {
+        return enabled ? @"Nebula Remote: On" : @"Nebula Remote: Off";
+    };
+    id<BrowserMenuCoordinatorHost> host = self.host;
+    NSString *(^explanationForState)(BOOL) = ^NSString *(BOOL enabled) {
+        if (!enabled) {
+            return @"Turn on to type from your iPhone or Mac.";
+        }
+        NSString *URLString = [host browserRemoteServerURLString] ?: @"http://<this Apple TV>.local:8080";
+        return [NSString stringWithFormat:@"Type on this TV from your iPhone or Mac.\n\nOpen %@ in any browser on your network.", URLString];
+    };
+    BrowserPreferencesStore *preferencesStore = self.preferencesStore;
+    BrowserAdvancedMenuItem *item = [self advancedMenuItemWithTitle:titleForState(preferencesStore.remoteServerEnabled)
+                                                              style:UIAlertActionStyleDefault
+                                                            handler:^{
+        preferencesStore.remoteServerEnabled = !preferencesStore.remoteServerEnabled;
+        [host browserRemoteServerPreferenceDidChange];
+    }];
+    __weak BrowserAdvancedMenuItem *weakItem = item;
+    item.adjustHandler = ^NSString *(__unused NSInteger direction) {
+        BOOL next = !preferencesStore.remoteServerEnabled;
+        preferencesStore.remoteServerEnabled = next;
+        [host browserRemoteServerPreferenceDidChange];
+        weakItem.explanation = explanationForState(next);
+        return titleForState(next);
+    };
+    item.explanation = explanationForState(preferencesStore.remoteServerEnabled);
+    return item;
+}
+
 - (BrowserAdvancedMenuItem *)fontSizeAdjustableMenuItem {
     NSString *(^titleForValue)(NSUInteger) = ^NSString *(NSUInteger fontSize) {
         return [NSString stringWithFormat:@"Font Size: %lu%%", (unsigned long)fontSize];
@@ -1486,6 +1517,7 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
             [self showTabsMenuItem],
             [self newTabMenuItem],
             [self arrowShortcutsToggleMenuItem],
+            [self remoteServerToggleMenuItem],
         ]],
         [BrowserAdvancedMenuSection sectionWithTitle:@"Appearance"
                                                items:@[

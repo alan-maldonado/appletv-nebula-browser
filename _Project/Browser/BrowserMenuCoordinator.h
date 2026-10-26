@@ -25,6 +25,10 @@
 - (void)browserRecreateActiveWebViewPreservingCurrentURL;
 - (void)browserBringCursorToFront;
 - (void)browserPlayVideoUnderCursorIfAvailable;
+// Nebula Remote: start/stop the server after the preference changed.
+- (void)browserRemoteServerPreferenceDidChange;
+// e.g. http://Alans-Apple-TV-4K.local:8080, or nil while the server is not listening.
+- (NSString *)browserRemoteServerURLString;
 
 @end
 

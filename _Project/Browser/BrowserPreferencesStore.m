@@ -7,6 +7,7 @@ static NSString * const kTextFontSizeDefaultsKey = @"TextFontSize";
 static NSString * const kEnableFullscreenVideoPlaybackDefaultsKey = @"EnableFullscreenVideoPlayback";
 static NSString * const kVideoHUDShowsTotalDurationDefaultsKey = @"VideoHUDShowsTotalDuration";
 static NSString * const kArrowDoubleTapShortcutsEnabledDefaultsKey = @"ArrowDoubleTapShortcutsEnabled";
+static NSString * const kRemoteServerEnabledDefaultsKey = @"RemoteServerEnabled";
 static NSString * const kThemeIndexDefaultsKey = @"ThemeIndex";
 static NSString * const kSettingsHintShownCountDefaultsKey = @"SettingsHintShownCount";
 static NSString * const kSearchEngineIndexDefaultsKey = @"SearchEngineIndex";
@@ -159,6 +160,16 @@ static NSArray<NSDictionary<NSString *, NSString *> *> *BrowserSearchEngines(voi
 
 - (void)setArrowDoubleTapShortcutsEnabled:(BOOL)arrowDoubleTapShortcutsEnabled {
     [[self defaults] setBool:arrowDoubleTapShortcutsEnabled forKey:kArrowDoubleTapShortcutsEnabledDefaultsKey];
+    [[self defaults] synchronize];
+}
+
+- (BOOL)remoteServerEnabled {
+    id storedValue = [[self defaults] objectForKey:kRemoteServerEnabledDefaultsKey];
+    return storedValue == nil ? YES : [storedValue boolValue];
+}
+
+- (void)setRemoteServerEnabled:(BOOL)remoteServerEnabled {
+    [[self defaults] setBool:remoteServerEnabled forKey:kRemoteServerEnabledDefaultsKey];
     [[self defaults] synchronize];
 }
 

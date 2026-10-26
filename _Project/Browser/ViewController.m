@@ -457,7 +457,9 @@ static UIColor *kTextColor(void) {
 - (void)handleApplicationDidBecomeActive:(NSNotification *)notification {
     (void)notification;
     [self hidePrivacyCover];
-    [self.remoteServer start];
+    if (self.preferencesStore.remoteServerEnabled) {
+        [self.remoteServer start];
+    }
 }
 
 // Persist or wipe browsing state when leaving the app, per privacy preferences.
@@ -1260,6 +1262,31 @@ static UIColor *kTextColor(void) {
 
 - (void)browserRemoteInputControllerPersistSession {
     [self.tabCoordinator persistSession];
+}
+
+#pragma mark - Nebula Remote settings
+
+- (void)browserRemoteServerPreferenceDidChange {
+    if (self.preferencesStore.remoteServerEnabled) {
+        [self.remoteServer start];
+    } else {
+        [self.remoteServer stop];
+    }
+}
+
+- (NSString *)browserRemoteServerURLString {
+    if (self.remoteServer.port == 0) {
+        return nil;
+    }
+    // Bonjour name of this device, e.g. Alans-Apple-TV-4K.local.
+    NSString *host = NSProcessInfo.processInfo.hostName;
+    if (host.length == 0 || [host isEqualToString:@"localhost"]) {
+        return nil;
+    }
+    if (![host hasSuffix:@".local"]) {
+        host = [host stringByAppendingString:@".local"];
+    }
+    return [NSString stringWithFormat:@"http://%@:%u", host, self.remoteServer.port];
 }
 
 #pragma mark - BrowserRemoteServerDelegate
