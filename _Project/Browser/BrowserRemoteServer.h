@@ -12,6 +12,8 @@ NS_ASSUME_NONNULL_BEGIN
 // Return NO when fieldID is not the active field (server answers 409).
 - (BOOL)remoteServer:(BrowserRemoteServer *)server submitFieldText:(NSString *)text fieldID:(NSString *)fieldID submitForm:(BOOL)submitForm;
 - (NSString *)remoteServerPageHTML:(BrowserRemoteServer *)server;
+// PNG for the iOS home-screen icon (GET /apple-touch-icon.png); nil answers 404.
+- (nullable NSData *)remoteServerTouchIconPNG:(BrowserRemoteServer *)server;
 
 @end
 

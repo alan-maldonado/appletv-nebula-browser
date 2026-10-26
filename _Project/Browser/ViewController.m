@@ -12,6 +12,7 @@
 #import "BrowserPageActionCoordinator.h"
 #import "BrowserPreferencesStore.h"
 #import "BrowserRemoteInputController.h"
+#import "BrowserRemotePage.h"
 #import "BrowserRemoteServer.h"
 #import "BrowserRemoteState.h"
 #import "BrowserSessionStore.h"
@@ -1288,7 +1289,48 @@ static UIColor *kTextColor(void) {
 }
 
 - (NSString *)remoteServerPageHTML:(BrowserRemoteServer *)server {
-    return @"<!doctype html><meta charset=\"utf-8\"><h1>Nebula Remote</h1>";
+    // The page follows the TV's theme accent; light accents (Classic, Gold, Sky) get dark text.
+    CGFloat red = 0.0, green = 0.0, blue = 0.0, alpha = 0.0;
+    [self.preferencesStore.themeAccentColor getRed:&red green:&green blue:&blue alpha:&alpha];
+    NSString *accentHex = [NSString stringWithFormat:@"#%02X%02X%02X",
+                           (int)lround(red * 255.0), (int)lround(green * 255.0), (int)lround(blue * 255.0)];
+    CGFloat luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    return [BrowserRemotePage HTMLWithAccentHex:accentHex onAccentHex:luminance > 0.6 ? @"#14102A" : @"#FFFFFF"];
+}
+
+- (NSData *)remoteServerTouchIconPNG:(BrowserRemoteServer *)server {
+    // The planet + ring of the active theme's preview art (800x480; "WEB BROWSER" text sits
+    // below y≈360), centered on a square filled with the art's flat background color.
+    NSString *assetName = [@"ThemePreview-" stringByAppendingString:self.preferencesStore.themeName];
+    UIImage *preview = [UIImage imageNamed:assetName] ?: [UIImage imageNamed:@"ThemePreview-Nebula"];
+    if (preview.CGImage == NULL) {
+        return nil;
+    }
+    CGFloat scale = preview.scale;
+    CGRect artRect = CGRectMake(200.0, 20.0, 400.0, 330.0);
+    CGImageRef crop = CGImageCreateWithImageInRect(preview.CGImage, CGRectMake(CGRectGetMinX(artRect) * scale, CGRectGetMinY(artRect) * scale,
+                                                                               CGRectGetWidth(artRect) * scale, CGRectGetHeight(artRect) * scale));
+    CGImageRef corner = CGImageCreateWithImageInRect(preview.CGImage, CGRectMake(0.0, 0.0, 1.0, 1.0));
+    if (crop == NULL || corner == NULL) {
+        CGImageRelease(crop);
+        CGImageRelease(corner);
+        return nil;
+    }
+    UIImage *art = [UIImage imageWithCGImage:crop];
+    UIImage *background = [UIImage imageWithCGImage:corner];
+    CGImageRelease(crop);
+    CGImageRelease(corner);
+
+    CGFloat side = 180.0;
+    CGFloat artHeight = side * CGRectGetHeight(artRect) / CGRectGetWidth(artRect);
+    UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
+    format.scale = 1.0;
+    format.opaque = YES;
+    UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(side, side) format:format];
+    return [renderer PNGDataWithActions:^(__unused UIGraphicsImageRendererContext *context) {
+        [background drawInRect:CGRectMake(0.0, 0.0, side, side)];
+        [art drawInRect:CGRectMake(0.0, (side - artHeight) / 2.0, side, artHeight)];
+    }];
 }
 
 #pragma mark - BrowserWebViewDelegate

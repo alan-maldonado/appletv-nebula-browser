@@ -191,6 +191,7 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
 - (void)route:(BrowserRemoteRequest *)request client:(BrowserRemoteConnection *)client {
     NSDictionary<NSString *, NSString *> *methodsByPath = @{
         @"/": @"GET",
+        @"/apple-touch-icon.png": @"GET",
         @"/api/state": @"GET",
         @"/api/open": @"POST",
         @"/api/field": @"POST",
@@ -209,6 +210,13 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
         [self onMain:client respond:^NSData *{
             NSString *HTML = [self.delegate remoteServerPageHTML:self] ?: @"";
             return BrowserRemoteResponseData(200, @"text/html; charset=utf-8", [HTML dataUsingEncoding:NSUTF8StringEncoding]);
+        }];
+    } else if ([request.path isEqualToString:@"/apple-touch-icon.png"]) {
+        [self onMain:client respond:^NSData *{
+            NSData *PNG = [self.delegate remoteServerTouchIconPNG:self];
+            return PNG != nil
+                ? BrowserRemoteResponseData(200, @"image/png", PNG)
+                : BrowserRemoteJSONResponseData(404, @{@"error": @"not-found"});
         }];
     } else if ([request.path isEqualToString:@"/api/state"]) {
         NSUInteger seenVersion = (NSUInteger)MAX(0, [request.query[@"v"] integerValue]);

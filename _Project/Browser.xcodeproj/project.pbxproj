@@ -24,6 +24,7 @@
 		A1B49A4E2D680900001D58A1 /* BrowserNavigationService.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49A4D2D680900001D58A1 /* BrowserNavigationService.m */; };
 		A1B49A552D68143D001D58A1 /* BrowserMenuCoordinator.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49A542D68143D001D58A1 /* BrowserMenuCoordinator.m */; };
 		A1B49A582D6828D4001D58A1 /* BrowserSessionStore.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49A572D6828D4001D58A1 /* BrowserSessionStore.m */; };
+		F2E5F0FC8AF08290265490A9 /* BrowserRemotePage.m in Sources */ = {isa = PBXBuildFile; fileRef = B1CE80D5FF271317C237BCEA /* BrowserRemotePage.m */; };
 		64EB2A74F165CDBB37B6F27B /* BrowserRemoteState.m in Sources */ = {isa = PBXBuildFile; fileRef = 52BE2AC21FA180B27E3B3F0B /* BrowserRemoteState.m */; };
 		9513EDCA7E17D5897059AFE2 /* BrowserRemoteHTTP.m in Sources */ = {isa = PBXBuildFile; fileRef = FE0B87D2591E3AC1E55C65EE /* BrowserRemoteHTTP.m */; };
 		D76842EDA59B9661655EE177 /* BrowserRemoteServer.m in Sources */ = {isa = PBXBuildFile; fileRef = 4707E9662B9111B42516DCC4 /* BrowserRemoteServer.m */; };
@@ -71,6 +72,8 @@
 		A1B49A542D68143D001D58A1 /* BrowserMenuCoordinator.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserMenuCoordinator.m; sourceTree = "<group>"; };
 		A1B49A562D6828D4001D58A1 /* BrowserSessionStore.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BrowserSessionStore.h; sourceTree = "<group>"; };
 		A1B49A572D6828D4001D58A1 /* BrowserSessionStore.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserSessionStore.m; sourceTree = "<group>"; };
+		5B036AA9BF513899781BCF7F /* BrowserRemotePage.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BrowserRemotePage.h; sourceTree = "<group>"; };
+		B1CE80D5FF271317C237BCEA /* BrowserRemotePage.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserRemotePage.m; sourceTree = "<group>"; };
 		230100AB7EBF2107EE6A090D /* BrowserRemoteState.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BrowserRemoteState.h; sourceTree = "<group>"; };
 		52BE2AC21FA180B27E3B3F0B /* BrowserRemoteState.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserRemoteState.m; sourceTree = "<group>"; };
 		E0FF8864E9DC5C0536C1C08C /* BrowserRemoteHTTP.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BrowserRemoteHTTP.h; sourceTree = "<group>"; };
@@ -212,6 +215,8 @@
 				A1B49A882D700000001D58A1 /* BrowserPreferencesStore.m */,
 				A1B49A562D6828D4001D58A1 /* BrowserSessionStore.h */,
 				A1B49A572D6828D4001D58A1 /* BrowserSessionStore.m */,
+				5B036AA9BF513899781BCF7F /* BrowserRemotePage.h */,
+				B1CE80D5FF271317C237BCEA /* BrowserRemotePage.m */,
 				230100AB7EBF2107EE6A090D /* BrowserRemoteState.h */,
 				52BE2AC21FA180B27E3B3F0B /* BrowserRemoteState.m */,
 				E0FF8864E9DC5C0536C1C08C /* BrowserRemoteHTTP.h */,
@@ -427,6 +432,7 @@
 				A1B49A4E2D680900001D58A1 /* BrowserNavigationService.m in Sources */,
 				A1B49A892D700000001D58A1 /* BrowserPreferencesStore.m in Sources */,
 				A1B49A582D6828D4001D58A1 /* BrowserSessionStore.m in Sources */,
+				F2E5F0FC8AF08290265490A9 /* BrowserRemotePage.m in Sources */,
 				64EB2A74F165CDBB37B6F27B /* BrowserRemoteState.m in Sources */,
 				9513EDCA7E17D5897059AFE2 /* BrowserRemoteHTTP.m in Sources */,
 				D76842EDA59B9661655EE177 /* BrowserRemoteServer.m in Sources */,
