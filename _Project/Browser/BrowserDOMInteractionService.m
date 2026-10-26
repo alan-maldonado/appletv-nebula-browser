@@ -101,7 +101,19 @@ static NSString * const kEditableElementSelector = @"input, textarea, select, [c
 - (NSString *)evaluateEditableElementJavaScriptAtPoint:(CGPoint)point
                                                 webView:(BrowserWebView *)webView
                                                    body:(NSString *)body {
-    NSString *wrappedBody = [NSString stringWithFormat:
+    return [self evaluateResolvedElementJavaScriptAtPoint:point webView:webView body:[self editableElementScriptBody:body]];
+}
+
+// Fire-and-forget variant for writes whose result is unused (never blocks the caller).
+- (void)dispatchEditableElementJavaScriptAtPoint:(CGPoint)point
+                                         webView:(BrowserWebView *)webView
+                                            body:(NSString *)body {
+    [self dispatchResolvedElementJavaScriptAtPoint:point webView:webView body:[self editableElementScriptBody:body]];
+}
+
+// Prepends browserEditableTarget() (the field being edited) to body.
+- (NSString *)editableElementScriptBody:(NSString *)body {
+    return [NSString stringWithFormat:
                              @"function browserIsEditableCandidate(element) {"
                                  "if (!element) { return false; }"
                                  "var tagName = element.tagName ? element.tagName.toLowerCase() : '';"
@@ -134,7 +146,6 @@ static NSString * const kEditableElementSelector = @"input, textarea, select, [c
                              "}"
                              "%@",
                              body];
-    return [self evaluateResolvedElementJavaScriptAtPoint:point webView:webView body:wrappedBody];
 }
 
 - (NSString *)hoverStateJavaScriptBody {

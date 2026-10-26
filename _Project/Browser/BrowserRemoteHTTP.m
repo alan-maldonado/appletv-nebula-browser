@@ -94,10 +94,38 @@ BrowserRemoteParseStatus BrowserRemoteParseRequest(NSData *buffer, BrowserRemote
     return BrowserRemoteParseStatusComplete;
 }
 
+BOOL BrowserRemoteRequestHasTrustedHost(BrowserRemoteRequest *request) {
+    NSString *host = [request.headers[@"host"] lowercaseString];
+    if (host.length == 0) {
+        return NO;
+    }
+    if ([host hasPrefix:@"["]) {
+        return [host containsString:@"]"]; // IPv6 literal, e.g. [fe80::1]:8080
+    }
+    NSRange colon = [host rangeOfString:@":" options:NSBackwardsSearch];
+    if (colon.location != NSNotFound) {
+        host = [host substringToIndex:colon.location];
+    }
+    if ([host isEqualToString:@"localhost"] || [host hasSuffix:@".local"]) {
+        return YES;
+    }
+    NSCharacterSet *notIPv4 = [[NSCharacterSet characterSetWithCharactersInString:@"0123456789."] invertedSet];
+    return [host rangeOfCharacterFromSet:notIPv4].location == NSNotFound && [host componentsSeparatedByString:@"."].count == 4;
+}
+
+BOOL BrowserRemoteRequestHasJSONContentType(BrowserRemoteRequest *request) {
+    NSString *contentType = [request.headers[@"content-type"] lowercaseString];
+    NSString *mediaType = [[contentType componentsSeparatedByString:@";"].firstObject
+                           stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+    return [mediaType isEqualToString:@"application/json"];
+}
+
 static NSString *BrowserRemoteReasonPhrase(NSInteger status) {
     switch (status) {
         case 200: return @"OK";
         case 400: return @"Bad Request";
+        case 403: return @"Forbidden";
+        case 415: return @"Unsupported Media Type";
         case 404: return @"Not Found";
         case 405: return @"Method Not Allowed";
         case 409: return @"Conflict";

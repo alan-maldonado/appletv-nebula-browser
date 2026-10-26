@@ -1296,6 +1296,7 @@ static UIColor *kTextColor(void) {
     if (request == nil) {
         return;
     }
+    [self.pageActionCoordinator discardActiveEditableField];
     if (newTab) {
         [self.tabCoordinator createNewTabWithRequest:request];
     } else {

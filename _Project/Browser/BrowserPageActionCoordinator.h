@@ -33,6 +33,9 @@ NS_ASSUME_NONNULL_BEGIN
 // Nebula Remote: fills the active field with text typed elsewhere. Returns NO when
 // fieldID is no longer the active field.
 - (BOOL)commitRemoteText:(NSString *)text forFieldID:(NSString *)fieldID submitForm:(BOOL)submitForm;
+// Drops the active field without writing it (e.g. before navigating away), so a
+// later remote submit with its ID gets 409 instead of typing into another page.
+- (void)discardActiveEditableField;
 
 @end
 

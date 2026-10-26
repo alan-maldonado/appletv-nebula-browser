@@ -116,6 +116,29 @@ static void testStateVersionBumpsOnlyOnChange(void) {
     EXPECT([state JSONObject][@"field"] == NSNull.null, @"field not null %@", [state JSONObject]);
 }
 
+static BrowserRemoteRequest *ParsedRequest(NSString *raw) {
+    BrowserRemoteRequest *request = nil;
+    BrowserRemoteParseRequest(Bytes(raw), &request);
+    return request;
+}
+
+static void testTrustsLocalHostsOnly(void) {
+    EXPECT(BrowserRemoteRequestHasTrustedHost(ParsedRequest(@"GET / HTTP/1.1\r\nHost: Alans-Apple-TV-4K.local:8080\r\n\r\n")), @".local rejected");
+    EXPECT(BrowserRemoteRequestHasTrustedHost(ParsedRequest(@"GET / HTTP/1.1\r\nHost: 192.168.1.20:8080\r\n\r\n")), @"IPv4 rejected");
+    EXPECT(BrowserRemoteRequestHasTrustedHost(ParsedRequest(@"GET / HTTP/1.1\r\nHost: [fe80::1]:8080\r\n\r\n")), @"IPv6 rejected");
+    EXPECT(BrowserRemoteRequestHasTrustedHost(ParsedRequest(@"GET / HTTP/1.1\r\nHost: localhost:8080\r\n\r\n")), @"localhost rejected");
+    EXPECT(!BrowserRemoteRequestHasTrustedHost(ParsedRequest(@"GET / HTTP/1.1\r\nHost: evil.example.com:8080\r\n\r\n")), @"rebinding host accepted");
+    EXPECT(!BrowserRemoteRequestHasTrustedHost(ParsedRequest(@"GET / HTTP/1.1\r\n\r\n")), @"missing host accepted");
+}
+
+static void testPostRequiresJSONContentType(void) {
+    NSString *body = @"{\"text\":\"x\"}";
+    BrowserRemoteRequest *json = ParsedRequest([NSString stringWithFormat:@"POST /api/open HTTP/1.1\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: %lu\r\n\r\n%@", (unsigned long)body.length, body]);
+    BrowserRemoteRequest *plain = ParsedRequest([NSString stringWithFormat:@"POST /api/open HTTP/1.1\r\nContent-Type: text/plain\r\nContent-Length: %lu\r\n\r\n%@", (unsigned long)body.length, body]);
+    EXPECT(BrowserRemoteRequestHasJSONContentType(json), @"application/json rejected");
+    EXPECT(!BrowserRemoteRequestHasJSONContentType(plain), @"text/plain accepted (no-cors CSRF)");
+}
+
 int main(void) {
     @autoreleasepool {
         sFailures = [NSMutableArray array];
@@ -132,6 +155,8 @@ int main(void) {
             {"testOpenPayloadRejectsBlankText", testOpenPayloadRejectsBlankText},
             {"testFieldPayloadRequiresIDAndText", testFieldPayloadRequiresIDAndText},
             {"testStateVersionBumpsOnlyOnChange", testStateVersionBumpsOnlyOnChange},
+            {"testTrustsLocalHostsOnly", testTrustsLocalHostsOnly},
+            {"testPostRequiresJSONContentType", testPostRequiresJSONContentType},
         };
         int failed = 0;
         size_t count = sizeof(tests) / sizeof(tests[0]);

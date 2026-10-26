@@ -17,6 +17,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSString *)evaluateEditableElementJavaScriptAtPoint:(CGPoint)point
                                                 webView:(BrowserWebView *)webView
                                                    body:(NSString *)body;
+// Fire-and-forget variant (non-blocking) for writes whose result is unused.
+- (void)dispatchEditableElementJavaScriptAtPoint:(CGPoint)point
+                                         webView:(BrowserWebView *)webView
+                                            body:(NSString *)body;
 // Non-blocking hover check from a cursor origin in containerView coordinates
 // (converts to a DOM point itself). Completion runs on the main queue.
 - (void)evaluateHoverStateAtCursorOrigin:(CGPoint)cursorOrigin

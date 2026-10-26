@@ -122,12 +122,14 @@
     self.activeEditableFieldID = fieldID;
     self.activeEditablePoint = point;
     self.activeEditableWebView = webView;
+    // Never publish a password's current value over the unauthenticated LAN endpoint.
+    BOOL isPassword = [fieldType isEqualToString:@"password"];
     [self.host browserPageActionCoordinatorActiveFieldDidChange:@{
         @"id": fieldID,
         @"title": fieldTitle ?: @"",
         @"type": fieldType ?: @"text",
         @"placeholder": placeholder ?: @"",
-        @"value": initialValue ?: @"",
+        @"value": isPassword ? @"" : (initialValue ?: @""),
     }];
 
     __weak typeof(self) weakSelf = self;
@@ -160,6 +162,18 @@
     [self.host browserPageActionCoordinatorActiveFieldDidChange:nil];
 }
 
+- (void)discardActiveEditableField {
+    UITextField *field = self.activeEditableField;
+    NSString *fieldID = self.activeEditableFieldID;
+    // Detach first so the EditingDidEnd handler (fired by resigning) commits nothing.
+    self.activeEditableField = nil;
+    [field resignFirstResponder];
+    [field removeFromSuperview];
+    if (fieldID != nil) {
+        [self clearActiveEditableFieldIDIfEqualTo:fieldID];
+    }
+}
+
 - (BOOL)commitRemoteText:(NSString *)text forFieldID:(NSString *)fieldID submitForm:(BOOL)submitForm {
     UITextField *field = self.activeEditableField;
     BrowserWebView *webView = self.activeEditableWebView;
@@ -183,7 +197,8 @@
                 submitForm:(BOOL)submitForm {
     NSString *escapedText = [self.domInteractionService javaScriptEscapedString:text];
     NSString *submitClause = submitForm ? @"if (target.form) { target.form.submit(); }" : @"";
-    [self.domInteractionService evaluateEditableElementJavaScriptAtPoint:point
+    // Fire-and-forget: this runs from EditingDidEnd and from Nebula Remote, never block there.
+    [self.domInteractionService dispatchEditableElementJavaScriptAtPoint:point
                                                                  webView:webView
                                                                     body:[NSString stringWithFormat:@"var v = '%@';"
                                                                           "var target = browserEditableTarget();"

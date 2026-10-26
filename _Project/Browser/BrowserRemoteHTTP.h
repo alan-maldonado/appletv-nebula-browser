@@ -38,6 +38,12 @@ BrowserRemoteParseStatus BrowserRemoteParseRequest(NSData *buffer, BrowserRemote
 NSData *BrowserRemoteResponseData(NSInteger status, NSString *contentType, NSData *body);
 NSData *BrowserRemoteJSONResponseData(NSInteger status, id JSONObject);
 
+// DNS-rebinding guard: Host must be a .local name, an IP literal or localhost.
+BOOL BrowserRemoteRequestHasTrustedHost(BrowserRemoteRequest *request);
+// CSRF guard: a cross-site page can only POST application/json after a CORS preflight,
+// which the server never grants; plain no-cors posts arrive as text/plain.
+BOOL BrowserRemoteRequestHasJSONContentType(BrowserRemoteRequest *request);
+
 // /api/open body {text, newTab}: trimmed text, or nil when missing, not a string or blank.
 NSString * _Nullable BrowserRemoteOpenPayloadFromJSON(id _Nullable JSON, BOOL *outNewTab);
 // /api/field body {id, text, submit}: nil when id or text is missing; submit defaults NO.

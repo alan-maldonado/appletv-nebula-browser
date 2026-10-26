@@ -196,6 +196,14 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
         @"/api/open": @"POST",
         @"/api/field": @"POST",
     };
+    if (!BrowserRemoteRequestHasTrustedHost(request)) {
+        [self finish:client data:BrowserRemoteJSONResponseData(403, @{@"error": @"untrusted-host"})];
+        return;
+    }
+    if ([request.method isEqualToString:@"POST"] && !BrowserRemoteRequestHasJSONContentType(request)) {
+        [self finish:client data:BrowserRemoteJSONResponseData(415, @{@"error": @"json-required"})];
+        return;
+    }
     NSString *expectedMethod = methodsByPath[request.path];
     if (expectedMethod == nil) {
         [self finish:client data:BrowserRemoteJSONResponseData(404, @{@"error": @"not-found"})];

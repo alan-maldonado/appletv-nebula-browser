@@ -155,13 +155,16 @@ static NSString * const kBrowserRemotePageTemplate =
     "$('fieldSend').onclick=sendField;"
     "$('fieldInput').onkeydown=function(e){if(e.key==='Enter'){sendField();}};"
     "var params=new URLSearchParams(location.search);"
+    // Bookmarklet/share window: send once and close; no long-poll, or every use would
+    // leave a parked connection behind (browsers cap ~6 per host, the server 8 total).
     "if(params.get('open')){"
-        "post('/api/open',{text:params.get('open'),newTab:params.get('tab')==='new'}).then(function(r){"
-            "toast('openToast',r.ok?'Enviado a la TV':'No se pudo enviar ('+r.status+')');"
-        "}).catch(function(){toast('openToast','Sin conexión con la TV');});"
         "history.replaceState(null,'','/');"
-    "}"
-    "poll();"
+        "status('Enviando a la TV…',false);"
+        "post('/api/open',{text:params.get('open'),newTab:params.get('tab')==='new'}).then(function(r){"
+            "status(r.ok?'Enviado a la TV':'No se pudo enviar ('+r.status+')',!r.ok);"
+            "if(r.ok){setTimeout(function(){window.close();},1200);}"
+        "}).catch(function(){status('Sin conexión con la TV',true);});"
+    "}else{poll();}"
     "</script></main></body></html>";
 
 + (NSString *)HTMLWithAccentHex:(NSString *)accentHex onAccentHex:(NSString *)onAccentHex {
