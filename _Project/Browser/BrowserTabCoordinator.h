@@ -54,6 +54,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)createNewTabWithRequest:(NSURLRequest *)request;
 - (void)switchToTabAtIndex:(NSInteger)tabIndex;
 - (void)closeTabAtIndex:(NSInteger)tabIndex;
+// NSNotFound when no tab has that identifier.
+- (NSInteger)indexOfTabWithIdentifier:(NSString *)identifier;
 - (void)recreateActiveWebViewPreservingCurrentURL;
 - (void)captureSnapshotForCurrentTab;
 - (void)prepareTabOverviewThumbnails;

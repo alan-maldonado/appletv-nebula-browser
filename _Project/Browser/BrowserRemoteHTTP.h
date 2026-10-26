@@ -49,4 +49,11 @@ NSString * _Nullable BrowserRemoteOpenPayloadFromJSON(id _Nullable JSON, BOOL *o
 // /api/field body {id, text, submit}: nil when id or text is missing; submit defaults NO.
 NSDictionary * _Nullable BrowserRemoteFieldPayloadFromJSON(id _Nullable JSON);
 
+// http/https URL with a host, after trimming whitespace.
+BOOL BrowserRemoteIsWebURLString(NSString * _Nullable string);
+// Validates an admin action body. action is the path after /api/ (e.g. "tabs/switch").
+// Returns the normalized payload, or nil with outErrorCode set ("invalid-request",
+// "invalid-url", "invalid-index", "invalid-launch").
+NSDictionary * _Nullable BrowserRemoteActionPayload(NSString *action, id _Nullable JSON, NSString * _Nullable * _Nullable outErrorCode);
+
 NS_ASSUME_NONNULL_END

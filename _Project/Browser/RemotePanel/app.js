@@ -2,7 +2,7 @@
 // Nebula Remote panel. All page/tab/favorite text goes through textContent, never innerHTML.
 
 // Admin actions turned on so far; their buttons stay disabled until listed here.
-var ENABLED_ACTIONS = [];
+var ENABLED_ACTIONS = ['tabs/switch', 'tabs/close', 'tabs/new'];
 
 var $ = function (id) { return document.getElementById(id); };
 var state = null;

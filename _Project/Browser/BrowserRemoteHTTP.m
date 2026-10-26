@@ -177,3 +177,38 @@ NSDictionary *BrowserRemoteFieldPayloadFromJSON(id JSON) {
         @"submit": @([submit respondsToSelector:@selector(boolValue)] ? [submit boolValue] : NO),
     };
 }
+
+BOOL BrowserRemoteIsWebURLString(NSString *string) {
+    if (![string isKindOfClass:[NSString class]]) {
+        return NO;
+    }
+    NSURL *URL = [NSURL URLWithString:[string stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]];
+    NSString *scheme = URL.scheme.lowercaseString;
+    return ([scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"]) && URL.host.length > 0;
+}
+
+static NSDictionary *BrowserRemoteInvalidPayload(NSString **outErrorCode, NSString *code) {
+    if (outErrorCode != NULL) {
+        *outErrorCode = code;
+    }
+    return nil;
+}
+
+NSDictionary *BrowserRemoteActionPayload(NSString *action, id JSON, NSString **outErrorCode) {
+    if (outErrorCode != NULL) {
+        *outErrorCode = nil;
+    }
+    if (![JSON isKindOfClass:[NSDictionary class]]) {
+        return BrowserRemoteInvalidPayload(outErrorCode, @"invalid-request");
+    }
+    NSDictionary *body = JSON;
+
+    if ([action isEqualToString:@"tabs/switch"] || [action isEqualToString:@"tabs/close"]) {
+        NSString *identifier = [body[@"id"] isKindOfClass:[NSString class]] ? body[@"id"] : nil;
+        return identifier.length > 0 ? @{@"id": identifier} : BrowserRemoteInvalidPayload(outErrorCode, @"invalid-request");
+    }
+    if ([action isEqualToString:@"tabs/new"]) {
+        return @{};
+    }
+    return BrowserRemoteInvalidPayload(outErrorCode, @"invalid-request");
+}

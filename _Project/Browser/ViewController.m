@@ -1290,6 +1290,42 @@ static UIColor *kTextColor(void) {
 
 #pragma mark - BrowserRemoteServerDelegate
 
+- (NSInteger)remoteServer:(BrowserRemoteServer *)server
+            performAction:(NSString *)action
+                  payload:(NSDictionary *)payload
+                 response:(NSDictionary **)outResponse {
+    if ([action hasPrefix:@"tabs/"]) {
+        return [self performRemoteTabAction:action payload:payload response:outResponse];
+    }
+    *outResponse = @{@"error": @"invalid-request"};
+    return 400;
+}
+
+- (NSInteger)performRemoteTabAction:(NSString *)action payload:(NSDictionary *)payload response:(NSDictionary **)outResponse {
+    if ([action isEqualToString:@"tabs/new"]) {
+        if (self.viewModel.tabs.count >= [BrowserViewModel maximumTabCount]) {
+            *outResponse = @{@"error": @"max-tabs"};
+            return 409; // the panel reports it; no alert on the TV
+        }
+        [self.pageActionCoordinator discardActiveEditableField];
+        [self.tabCoordinator createNewTabLoadingHomePage:YES];
+        return 200;
+    }
+
+    NSInteger index = [self.tabCoordinator indexOfTabWithIdentifier:payload[@"id"]];
+    if (index == NSNotFound) {
+        *outResponse = @{@"error": @"tab-not-found"};
+        return 404;
+    }
+    [self.pageActionCoordinator discardActiveEditableField];
+    if ([action isEqualToString:@"tabs/switch"]) {
+        [self.tabCoordinator switchToTabAtIndex:index];
+    } else {
+        [self.tabCoordinator closeTabAtIndex:index];
+    }
+    return 200;
+}
+
 - (void)remoteServer:(BrowserRemoteServer *)server openText:(NSString *)text inNewTab:(BOOL)newTab {
     NSURLRequest *request = [self.navigationService requestForURLOrSearchString:text];
     if (request == nil) {

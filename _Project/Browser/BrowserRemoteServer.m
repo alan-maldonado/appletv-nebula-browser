@@ -197,6 +197,15 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
         @"/api/state": @"GET",
         @"/api/open": @"POST",
         @"/api/field": @"POST",
+        @"/api/tabs/switch": @"POST",
+        @"/api/tabs/close": @"POST",
+        @"/api/tabs/new": @"POST",
+        @"/api/favorites/add": @"POST",
+        @"/api/favorites/update": @"POST",
+        @"/api/favorites/remove": @"POST",
+        @"/api/favorites/move": @"POST",
+        @"/api/favorites/open": @"POST",
+        @"/api/home": @"POST",
     };
     if (!BrowserRemoteRequestHasTrustedHost(request)) {
         [self finish:client data:BrowserRemoteJSONResponseData(403, @{@"error": @"untrusted-host"})];
@@ -249,6 +258,20 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
         [self onMain:client respond:^NSData *{
             [self.delegate remoteServer:self openText:text inNewTab:newTab];
             return BrowserRemoteJSONResponseData(200, @{@"ok": @YES});
+        }];
+    } else if (![request.path isEqualToString:@"/api/field"]) {
+        // Admin actions: validated here, executed by the delegate on the main queue.
+        NSString *action = [request.path substringFromIndex:@"/api/".length];
+        NSString *errorCode = nil;
+        NSDictionary *payload = BrowserRemoteActionPayload(action, [request JSONBody], &errorCode);
+        if (payload == nil) {
+            [self finish:client data:BrowserRemoteJSONResponseData(400, @{@"error": errorCode ?: @"invalid-request"})];
+            return;
+        }
+        [self onMain:client respond:^NSData *{
+            NSDictionary *response = nil;
+            NSInteger status = [self.delegate remoteServer:self performAction:action payload:payload response:&response];
+            return BrowserRemoteJSONResponseData(status, response ?: @{@"ok": @YES});
         }];
     } else {
         NSDictionary *payload = BrowserRemoteFieldPayloadFromJSON([request JSONBody]);

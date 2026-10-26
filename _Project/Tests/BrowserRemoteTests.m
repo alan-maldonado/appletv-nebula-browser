@@ -249,6 +249,27 @@ static void testStateIncludesAdminSections(void) {
     EXPECT([[state JSONObject][@"tabs"][0][@"id"] isEqualToString:@"t1"], @"json tabs %@", [state JSONObject]);
 }
 
+static void testTabPayloads(void) {
+    NSString *error = nil;
+    EXPECT(BrowserRemoteActionPayload(@"tabs/switch", @{}, &error) == nil && [error isEqualToString:@"invalid-request"], @"switch {} %@", error);
+    error = nil;
+    NSDictionary *switchPayload = BrowserRemoteActionPayload(@"tabs/switch", @{@"id": @"t1"}, &error);
+    EXPECT([switchPayload isEqualToDictionary:@{@"id": @"t1"}] && error == nil, @"switch %@ %@", switchPayload, error);
+    NSDictionary *newPayload = BrowserRemoteActionPayload(@"tabs/new", @{}, &error);
+    EXPECT([newPayload isEqualToDictionary:@{}], @"new %@", newPayload);
+    error = nil;
+    EXPECT(BrowserRemoteActionPayload(@"tabs/explode", @{}, &error) == nil && [error isEqualToString:@"invalid-request"], @"unknown %@", error);
+}
+
+static void testWebURLValidation(void) {
+    EXPECT(BrowserRemoteIsWebURLString(@"https://a.com"), @"https rejected");
+    EXPECT(BrowserRemoteIsWebURLString(@" http://a.com/x "), @"trimmed http rejected");
+    EXPECT(!BrowserRemoteIsWebURLString(@"ftp://a.com"), @"ftp accepted");
+    EXPECT(!BrowserRemoteIsWebURLString(@"javascript:alert(1)"), @"javascript accepted");
+    EXPECT(!BrowserRemoteIsWebURLString(@"https://"), @"hostless accepted");
+    EXPECT(!BrowserRemoteIsWebURLString(@""), @"empty accepted");
+}
+
 int main(void) {
     @autoreleasepool {
         sFailures = [NSMutableArray array];
@@ -274,6 +295,8 @@ int main(void) {
             {"testMoveAndUpdate", testMoveAndUpdate},
             {"testMutationPostsNotification", testMutationPostsNotification},
             {"testStateIncludesAdminSections", testStateIncludesAdminSections},
+            {"testTabPayloads", testTabPayloads},
+            {"testWebURLValidation", testWebURLValidation},
         };
         int failed = 0;
         size_t count = sizeof(tests) / sizeof(tests[0]);

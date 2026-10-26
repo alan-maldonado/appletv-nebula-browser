@@ -534,6 +534,13 @@ static CGFloat const kThumbnailStagingOffset = 4096.0;
     [self persistSession];
 }
 
+- (NSInteger)indexOfTabWithIdentifier:(NSString *)identifier {
+    NSUInteger index = [self.viewModel.tabs indexOfObjectPassingTest:^BOOL(BrowserTabViewModel *tab, __unused NSUInteger idx, __unused BOOL *stop) {
+        return [tab.identifier isEqualToString:identifier];
+    }];
+    return index == NSNotFound ? NSNotFound : (NSInteger)index;
+}
+
 - (void)closeTabAtIndex:(NSInteger)tabIndex {
     if (tabIndex < 0 || tabIndex >= self.viewModel.tabs.count) {
         return;

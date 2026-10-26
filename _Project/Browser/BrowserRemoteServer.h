@@ -11,6 +11,13 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)remoteServer:(BrowserRemoteServer *)server openText:(NSString *)text inNewTab:(BOOL)newTab;
 // Return NO when fieldID is not the active field (server answers 409).
 - (BOOL)remoteServer:(BrowserRemoteServer *)server submitFieldText:(NSString *)text fieldID:(NSString *)fieldID submitForm:(BOOL)submitForm;
+// Admin panel actions (tabs/…, favorites/…, home) with a payload already validated by
+// BrowserRemoteActionPayload. Returns the HTTP status; *outResponse is the JSON body
+// (nil means {"ok":true}).
+- (NSInteger)remoteServer:(BrowserRemoteServer *)server
+            performAction:(NSString *)action
+                  payload:(NSDictionary *)payload
+                 response:(NSDictionary * _Nullable * _Nonnull)outResponse;
 // PNG for the iOS home-screen icon (GET /apple-touch-icon.png); nil answers 404.
 - (nullable NSData *)remoteServerTouchIconPNG:(BrowserRemoteServer *)server;
 
