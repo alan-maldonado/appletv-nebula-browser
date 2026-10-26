@@ -1,4 +1,6 @@
 #import "BrowserMenuCoordinator.h"
+
+#import "BrowserFavoritesStore.h"
 #import "BrowserPreferencesStore.h"
 #import "BrowserWebView.h"
 
@@ -748,20 +750,15 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
     [[self.host browserWebView] loadRequest:request];
 }
 
-- (void)saveFavoritesArray:(NSArray *)favorites {
-    [[NSUserDefaults standardUserDefaults] setObject:favorites forKey:@"FAVORITES"];
-    [[NSUserDefaults standardUserDefaults] synchronize];
-}
-
 - (void)presentDeleteFavoriteMenu {
-    NSArray *favorites = [[NSUserDefaults standardUserDefaults] arrayForKey:@"FAVORITES"];
+    NSArray<NSDictionary<NSString *, NSString *> *> *favorites = [[BrowserFavoritesStore standardStore] favorites];
     UIAlertController *alertController = [self browserAlertControllerWithTitle:@"Delete a Favorite"
                                                                        message:@"Select a Favorite to Delete"];
     __weak typeof(self) weakSelf = self;
     
-    [favorites enumerateObjectsUsingBlock:^(NSArray *entry, NSUInteger index, BOOL *stop) {
-        NSString *URLString = entry.count > 0 ? entry[0] : @"";
-        NSString *title = entry.count > 1 ? entry[1] : @"";
+    [favorites enumerateObjectsUsingBlock:^(NSDictionary<NSString *, NSString *> *entry, NSUInteger index, BOOL *stop) {
+        NSString *URLString = entry[@"url"];
+        NSString *title = entry[@"title"];
         if (![weakSelf stringHasVisibleContent:URLString]) {
             return;
         }
@@ -770,9 +767,7 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
         [alertController addAction:[weakSelf browserActionWithTitle:displayTitle
                                                               style:UIAlertActionStyleDefault
                                                             handler:^(__unused UIAlertAction *action) {
-            NSMutableArray *updatedFavorites = [favorites mutableCopy];
-            [updatedFavorites removeObjectAtIndex:index];
-            [weakSelf saveFavoritesArray:updatedFavorites];
+            [[BrowserFavoritesStore standardStore] removeAtIndex:index expectedURLString:URLString];
         }]];
     }];
     
@@ -805,26 +800,20 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
             savedTitle = currentURL;
         }
         
-        NSArray *favoriteEntry = @[currentURL, savedTitle ?: @""];
-        NSMutableArray *favorites = [[[NSUserDefaults standardUserDefaults] arrayForKey:@"FAVORITES"] mutableCopy];
-        if (favorites == nil) {
-            favorites = [NSMutableArray array];
-        }
-        [favorites addObject:favoriteEntry];
-        [weakSelf saveFavoritesArray:favorites];
+        [[BrowserFavoritesStore standardStore] addURLString:currentURL title:savedTitle];
     }]];
     [alertController addAction:[self browserCancelAction]];
     [self.host browserPresentViewController:alertController];
 }
 
 - (void)presentFavoritesMenu {
-    NSArray *favorites = [[NSUserDefaults standardUserDefaults] arrayForKey:@"FAVORITES"];
+    NSArray<NSDictionary<NSString *, NSString *> *> *favorites = [[BrowserFavoritesStore standardStore] favorites];
     UIAlertController *alertController = [self browserAlertControllerWithTitle:@"Favorites" message:@""];
     __weak typeof(self) weakSelf = self;
     
-    [favorites enumerateObjectsUsingBlock:^(NSArray *entry, NSUInteger index, BOOL *stop) {
-        NSString *URLString = entry.count > 0 ? entry[0] : @"";
-        NSString *title = entry.count > 1 ? entry[1] : @"";
+    [favorites enumerateObjectsUsingBlock:^(NSDictionary<NSString *, NSString *> *entry, NSUInteger index, BOOL *stop) {
+        NSString *URLString = entry[@"url"];
+        NSString *title = entry[@"title"];
         NSString *displayTitle = [weakSelf displayTitleForStoredTitle:title URLString:URLString includeURL:NO];
         if (![weakSelf stringHasVisibleContent:displayTitle]) {
             return;

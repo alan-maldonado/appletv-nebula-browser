@@ -4,5 +4,5 @@ set -e
 cd "$(dirname "$0")/.."
 OUT=$(mktemp -d)/remote-tests
 xcrun clang -fobjc-arc -framework Foundation -I Browser \
-  Browser/BrowserRemoteHTTP.m Browser/BrowserRemoteState.m Tests/BrowserRemoteTests.m -o "$OUT"
+  Browser/BrowserFavoritesStore.m Browser/BrowserRemoteHTTP.m Browser/BrowserRemoteState.m Tests/BrowserRemoteTests.m -o "$OUT"
 "$OUT"

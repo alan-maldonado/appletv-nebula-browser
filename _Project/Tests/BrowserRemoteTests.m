@@ -1,6 +1,7 @@
 // Tests for the pure-Foundation parts of Nebula Remote. Run with Tests/run-remote-tests.sh.
 #import <Foundation/Foundation.h>
 
+#import "BrowserFavoritesStore.h"
 #import "BrowserRemoteHTTP.h"
 #import "BrowserRemoteState.h"
 
@@ -139,6 +140,96 @@ static void testPostRequiresJSONContentType(void) {
     EXPECT(!BrowserRemoteRequestHasJSONContentType(plain), @"text/plain accepted (no-cors CSRF)");
 }
 
+// A favorites store over a throwaway defaults suite, optionally pre-seeded.
+static BrowserFavoritesStore *FavoritesStore(NSString *suite, NSArray *stored) {
+    [[NSUserDefaults standardUserDefaults] removePersistentDomainForName:suite];
+    NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:suite];
+    if (stored != nil) {
+        [defaults setObject:stored forKey:@"FAVORITES"];
+    }
+    return [[BrowserFavoritesStore alloc] initWithDefaults:defaults];
+}
+
+static void RemoveSuite(NSString *suite) {
+    [[NSUserDefaults standardUserDefaults] removePersistentDomainForName:suite];
+}
+
+static NSDictionary *Fav(NSString *url, NSString *title) {
+    return @{@"url": url, @"title": title};
+}
+
+static void testReadsStoredPairs(void) {
+    NSString *suite = @"nebula.tests.readsStoredPairs";
+    BrowserFavoritesStore *store = FavoritesStore(suite, @[@[@"https://a.com", @"A"], @[@"https://b.com", @"B"]]);
+    NSArray *expected = @[Fav(@"https://a.com", @"A"), Fav(@"https://b.com", @"B")];
+    BOOL ok = [store.favorites isEqualToArray:expected];
+    RemoveSuite(suite);
+    EXPECT(ok, @"favorites %@", store.favorites);
+}
+
+static void testSkipsCorruptEntries(void) {
+    NSString *suite = @"nebula.tests.skipsCorrupt";
+    BrowserFavoritesStore *store = FavoritesStore(suite, @[@3, @[@"https://a.com"], @[@"https://b.com", @"B"], @"x", @[@4, @"N"]]);
+    NSArray *favorites = store.favorites;
+    RemoveSuite(suite);
+    EXPECT(favorites.count == 2, @"count %lu %@", (unsigned long)favorites.count, favorites);
+    EXPECT([favorites[0] isEqualToDictionary:Fav(@"https://a.com", @"https://a.com")], @"[0] %@", favorites[0]);
+    EXPECT([favorites[1] isEqualToDictionary:Fav(@"https://b.com", @"B")], @"[1] %@", favorites[1]);
+}
+
+static void testAddUsesURLWhenTitleBlank(void) {
+    NSString *suite = @"nebula.tests.addBlankTitle";
+    BrowserFavoritesStore *store = FavoritesStore(suite, nil);
+    [store addURLString:@"https://c.com" title:@"  "];
+    NSArray *stored = [[[NSUserDefaults alloc] initWithSuiteName:suite] arrayForKey:@"FAVORITES"];
+    NSDictionary *last = store.favorites.lastObject;
+    RemoveSuite(suite);
+    EXPECT([last[@"title"] isEqualToString:@"https://c.com"], @"title %@", last);
+    EXPECT(([stored.lastObject isEqual:@[@"https://c.com", @"https://c.com"]]), @"stored %@", stored);
+}
+
+static void testRemoveWithStaleURLIsRejected(void) {
+    NSString *suite = @"nebula.tests.removeStale";
+    BrowserFavoritesStore *store = FavoritesStore(suite, @[@[@"https://a.com", @"A"], @[@"https://b.com", @"B"]]);
+    BrowserFavoritesEditResult stale = [store removeAtIndex:0 expectedURLString:@"https://b.com"];
+    NSUInteger countAfterStale = store.favorites.count;
+    BrowserFavoritesEditResult outOfRange = [store removeAtIndex:5 expectedURLString:@"https://a.com"];
+    BrowserFavoritesEditResult ok = [store removeAtIndex:0 expectedURLString:@"https://a.com"];
+    NSUInteger countAfterOK = store.favorites.count;
+    RemoveSuite(suite);
+    EXPECT(stale == BrowserFavoritesEditResultChanged && countAfterStale == 2, @"stale %ld count %lu", (long)stale, (unsigned long)countAfterStale);
+    EXPECT(outOfRange == BrowserFavoritesEditResultInvalidIndex, @"outOfRange %ld", (long)outOfRange);
+    EXPECT(ok == BrowserFavoritesEditResultOK && countAfterOK == 1, @"ok %ld count %lu", (long)ok, (unsigned long)countAfterOK);
+}
+
+static void testMoveAndUpdate(void) {
+    NSString *suite = @"nebula.tests.moveUpdate";
+    BrowserFavoritesStore *store = FavoritesStore(suite, @[@[@"https://a.com", @"A"], @[@"https://b.com", @"B"], @[@"https://c.com", @"C"]]);
+    BrowserFavoritesEditResult move = [store moveFromIndex:0 expectedURLString:@"https://a.com" toIndex:2];
+    NSArray *order = [store.favorites valueForKey:@"url"];
+    BrowserFavoritesEditResult badMove = [store moveFromIndex:0 expectedURLString:@"https://b.com" toIndex:3];
+    BrowserFavoritesEditResult update = [store updateAtIndex:0 expectedURLString:@"https://b.com" title:@"Bee" URLString:@"https://bee.com"];
+    NSDictionary *first = store.favorites.firstObject;
+    RemoveSuite(suite);
+    EXPECT((move == BrowserFavoritesEditResultOK && [order isEqualToArray:@[@"https://b.com", @"https://c.com", @"https://a.com"]]), @"move %ld order %@", (long)move, order);
+    EXPECT(badMove == BrowserFavoritesEditResultInvalidIndex, @"badMove %ld", (long)badMove);
+    EXPECT(update == BrowserFavoritesEditResultOK && [first isEqualToDictionary:Fav(@"https://bee.com", @"Bee")], @"update %ld first %@", (long)update, first);
+}
+
+static void testMutationPostsNotification(void) {
+    NSString *suite = @"nebula.tests.notification";
+    BrowserFavoritesStore *store = FavoritesStore(suite, nil);
+    __block NSUInteger posts = 0;
+    id observer = [[NSNotificationCenter defaultCenter] addObserverForName:BrowserFavoritesStoreDidChangeNotification
+                                                                    object:store
+                                                                     queue:nil
+                                                                usingBlock:^(__unused NSNotification *note) { posts++; }];
+    [store addURLString:@"https://a.com" title:@"A"];
+    [[NSNotificationCenter defaultCenter] removeObserver:observer];
+    RemoveSuite(suite);
+    EXPECT(posts == 1, @"posts %lu", (unsigned long)posts);
+}
+
 int main(void) {
     @autoreleasepool {
         sFailures = [NSMutableArray array];
@@ -157,6 +248,12 @@ int main(void) {
             {"testStateVersionBumpsOnlyOnChange", testStateVersionBumpsOnlyOnChange},
             {"testTrustsLocalHostsOnly", testTrustsLocalHostsOnly},
             {"testPostRequiresJSONContentType", testPostRequiresJSONContentType},
+            {"testReadsStoredPairs", testReadsStoredPairs},
+            {"testSkipsCorruptEntries", testSkipsCorruptEntries},
+            {"testAddUsesURLWhenTitleBlank", testAddUsesURLWhenTitleBlank},
+            {"testRemoveWithStaleURLIsRejected", testRemoveWithStaleURLIsRejected},
+            {"testMoveAndUpdate", testMoveAndUpdate},
+            {"testMutationPostsNotification", testMutationPostsNotification},
         };
         int failed = 0;
         size_t count = sizeof(tests) / sizeof(tests[0]);
