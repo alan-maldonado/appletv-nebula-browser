@@ -56,6 +56,7 @@ static NSString *BrowserTrimmed(NSString *string) {
         [pairs addObject:@[favorite[@"url"], favorite[@"title"]]];
     }
     [self.defaults setObject:pairs forKey:kBrowserFavoritesDefaultsKey];
+    [self.defaults synchronize];
     [[NSNotificationCenter defaultCenter] postNotificationName:BrowserFavoritesStoreDidChangeNotification object:self];
 }
 

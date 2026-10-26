@@ -13,6 +13,7 @@
 #import "BrowserPreferencesStore.h"
 #import "BrowserRemoteInputController.h"
 #import "BrowserFavoritesStore.h"
+#import "BrowserRemoteHTTP.h"
 #import "BrowserRemoteServer.h"
 #import "BrowserRemoteState.h"
 #import "BrowserSessionStore.h"
@@ -1297,8 +1298,84 @@ static UIColor *kTextColor(void) {
     if ([action hasPrefix:@"tabs/"]) {
         return [self performRemoteTabAction:action payload:payload response:outResponse];
     }
+    if ([action hasPrefix:@"favorites/"]) {
+        return [self performRemoteFavoriteAction:action payload:payload response:outResponse];
+    }
     *outResponse = @{@"error": @"invalid-request"};
     return 400;
+}
+
+// The active web page as a favorite/home candidate, or nil when it isn't an http(s) page.
+- (NSString *)remoteCurrentPageURLString {
+    NSString *URLString = self.webview.request.URL.absoluteString;
+    return BrowserRemoteIsWebURLString(URLString) ? URLString : nil;
+}
+
+- (NSInteger)performRemoteFavoriteAction:(NSString *)action payload:(NSDictionary *)payload response:(NSDictionary **)outResponse {
+    BrowserFavoritesStore *store = [BrowserFavoritesStore standardStore];
+    if ([action isEqualToString:@"favorites/add"]) {
+        if ([payload[@"current"] boolValue]) {
+            NSString *URLString = [self remoteCurrentPageURLString];
+            if (URLString == nil) {
+                *outResponse = @{@"error": @"no-current-page"};
+                return 400;
+            }
+            [store addURLString:URLString title:self.webview.title];
+        } else {
+            [store addURLString:payload[@"url"] title:payload[@"title"]];
+        }
+        return 200;
+    }
+
+    NSUInteger index = [payload[@"index"] unsignedIntegerValue];
+    NSString *expectedURLString = payload[@"url"];
+    BrowserFavoritesEditResult result = BrowserFavoritesEditResultOK;
+    if ([action isEqualToString:@"favorites/update"]) {
+        result = [store updateAtIndex:index expectedURLString:expectedURLString title:payload[@"title"] URLString:payload[@"newURL"]];
+    } else if ([action isEqualToString:@"favorites/remove"]) {
+        result = [store removeAtIndex:index expectedURLString:expectedURLString];
+    } else if ([action isEqualToString:@"favorites/move"]) {
+        result = [store moveFromIndex:index expectedURLString:expectedURLString toIndex:[payload[@"to"] unsignedIntegerValue]];
+    } else if ([action isEqualToString:@"favorites/open"]) {
+        NSArray *favorites = store.favorites;
+        if (index >= favorites.count) {
+            result = BrowserFavoritesEditResultInvalidIndex;
+        } else if (![favorites[index][@"url"] isEqualToString:expectedURLString]) {
+            result = BrowserFavoritesEditResultChanged;
+        } else {
+            return [self openRemoteURLString:expectedURLString inNewTab:[payload[@"newTab"] boolValue] response:outResponse];
+        }
+    }
+
+    switch (result) {
+        case BrowserFavoritesEditResultOK:
+            return 200;
+        case BrowserFavoritesEditResultChanged:
+            *outResponse = @{@"error": @"favorite-changed"};
+            return 409;
+        case BrowserFavoritesEditResultInvalidIndex:
+            *outResponse = @{@"error": @"invalid-index"};
+            return 400;
+    }
+}
+
+- (NSInteger)openRemoteURLString:(NSString *)URLString inNewTab:(BOOL)newTab response:(NSDictionary **)outResponse {
+    NSURLRequest *request = [self.navigationService requestForURLString:URLString];
+    if (request == nil) {
+        *outResponse = @{@"error": @"invalid-url"};
+        return 400;
+    }
+    if (newTab && self.viewModel.tabs.count >= [BrowserViewModel maximumTabCount]) {
+        *outResponse = @{@"error": @"max-tabs"};
+        return 409;
+    }
+    [self.pageActionCoordinator discardActiveEditableField];
+    if (newTab) {
+        [self.tabCoordinator createNewTabWithRequest:request];
+    } else {
+        [self.webview loadRequest:request];
+    }
+    return 200;
 }
 
 - (NSInteger)performRemoteTabAction:(NSString *)action payload:(NSDictionary *)payload response:(NSDictionary **)outResponse {

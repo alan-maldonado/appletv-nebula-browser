@@ -187,6 +187,15 @@ BOOL BrowserRemoteIsWebURLString(NSString *string) {
     return ([scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"]) && URL.host.length > 0;
 }
 
+static NSString *BrowserRemoteTrimmed(NSString *string) {
+    return [string stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+}
+
+// Trimmed string, or @"" for anything that isn't a string.
+static NSString *BrowserRemoteTrimmedString(id value) {
+    return [value isKindOfClass:[NSString class]] ? BrowserRemoteTrimmed(value) : @"";
+}
+
 static NSDictionary *BrowserRemoteInvalidPayload(NSString **outErrorCode, NSString *code) {
     if (outErrorCode != NULL) {
         *outErrorCode = code;
@@ -209,6 +218,58 @@ NSDictionary *BrowserRemoteActionPayload(NSString *action, id JSON, NSString **o
     }
     if ([action isEqualToString:@"tabs/new"]) {
         return @{};
+    }
+
+    if ([action isEqualToString:@"favorites/add"]) {
+        if ([body[@"current"] respondsToSelector:@selector(boolValue)] && [body[@"current"] boolValue]) {
+            return @{@"current": @YES};
+        }
+        if (!BrowserRemoteIsWebURLString(body[@"url"])) {
+            return BrowserRemoteInvalidPayload(outErrorCode, @"invalid-url");
+        }
+        return @{@"url": BrowserRemoteTrimmed(body[@"url"]), @"title": BrowserRemoteTrimmedString(body[@"title"])};
+    }
+    if ([action hasPrefix:@"favorites/"]) {
+        // update/remove/move/open all target {index, url}: the URL guards against a list
+        // that changed on the TV since the panel rendered it.
+        if (![body[@"index"] isKindOfClass:[NSNumber class]] || ![body[@"url"] isKindOfClass:[NSString class]]) {
+            return BrowserRemoteInvalidPayload(outErrorCode, @"invalid-request");
+        }
+        NSInteger index = [body[@"index"] integerValue];
+        if (index < 0) {
+            return BrowserRemoteInvalidPayload(outErrorCode, @"invalid-index");
+        }
+        NSMutableDictionary *payload = [@{@"index": @(index), @"url": body[@"url"]} mutableCopy];
+        if ([action isEqualToString:@"favorites/remove"]) {
+            return payload;
+        }
+        if ([action isEqualToString:@"favorites/open"]) {
+            id newTab = body[@"newTab"];
+            payload[@"newTab"] = @([newTab respondsToSelector:@selector(boolValue)] && [newTab boolValue]);
+            return payload;
+        }
+        if ([action isEqualToString:@"favorites/move"]) {
+            if (![body[@"to"] isKindOfClass:[NSNumber class]]) {
+                return BrowserRemoteInvalidPayload(outErrorCode, @"invalid-request");
+            }
+            if ([body[@"to"] integerValue] < 0) {
+                return BrowserRemoteInvalidPayload(outErrorCode, @"invalid-index");
+            }
+            payload[@"to"] = @([body[@"to"] integerValue]);
+            return payload;
+        }
+        if ([action isEqualToString:@"favorites/update"]) {
+            if (![body[@"title"] isKindOfClass:[NSString class]]) {
+                return BrowserRemoteInvalidPayload(outErrorCode, @"invalid-request");
+            }
+            NSString *newURL = body[@"newURL"] != nil ? body[@"newURL"] : body[@"url"];
+            if (!BrowserRemoteIsWebURLString(newURL)) {
+                return BrowserRemoteInvalidPayload(outErrorCode, @"invalid-url");
+            }
+            payload[@"title"] = BrowserRemoteTrimmed(body[@"title"]);
+            payload[@"newURL"] = BrowserRemoteTrimmed(newURL);
+            return payload;
+        }
     }
     return BrowserRemoteInvalidPayload(outErrorCode, @"invalid-request");
 }

@@ -270,6 +270,27 @@ static void testWebURLValidation(void) {
     EXPECT(!BrowserRemoteIsWebURLString(@""), @"empty accepted");
 }
 
+static void testFavoritePayloads(void) {
+    NSString *error = nil;
+    NSDictionary *add = BrowserRemoteActionPayload(@"favorites/add", @{@"url": @" https://a.com "}, &error);
+    EXPECT([add[@"url"] isEqualToString:@"https://a.com"] && [add[@"title"] isEqualToString:@""], @"add %@ %@", add, error);
+    NSDictionary *addCurrent = BrowserRemoteActionPayload(@"favorites/add", @{@"current": @YES}, &error);
+    EXPECT([addCurrent isEqualToDictionary:@{@"current": @YES}], @"add current %@", addCurrent);
+    error = nil;
+    EXPECT(BrowserRemoteActionPayload(@"favorites/add", @{@"url": @"ftp://a"}, &error) == nil && [error isEqualToString:@"invalid-url"], @"add ftp %@", error);
+    error = nil;
+    EXPECT(BrowserRemoteActionPayload(@"favorites/update", @{@"url": @"https://a.com", @"title": @"A"}, &error) == nil && [error isEqualToString:@"invalid-request"], @"update no index %@", error);
+    error = nil;
+    EXPECT(BrowserRemoteActionPayload(@"favorites/update", @{@"index": @-1, @"url": @"https://a.com", @"title": @"A"}, &error) == nil && [error isEqualToString:@"invalid-index"], @"update -1 %@", error);
+    error = nil;
+    EXPECT(BrowserRemoteActionPayload(@"favorites/move", @{@"index": @0, @"url": @"https://a.com", @"to": @"x"}, &error) == nil && [error isEqualToString:@"invalid-request"], @"move to x %@", error);
+    error = nil;
+    NSDictionary *open = BrowserRemoteActionPayload(@"favorites/open", @{@"index": @0, @"url": @"https://a.com"}, &error);
+    EXPECT(open != nil && ![open[@"newTab"] boolValue] && [open[@"index"] integerValue] == 0, @"open %@ %@", open, error);
+    NSDictionary *remove = BrowserRemoteActionPayload(@"favorites/remove", @{@"index": @1, @"url": @"https://b.com"}, &error);
+    EXPECT([remove[@"index"] integerValue] == 1 && [remove[@"url"] isEqualToString:@"https://b.com"], @"remove %@", remove);
+}
+
 int main(void) {
     @autoreleasepool {
         sFailures = [NSMutableArray array];
@@ -297,6 +318,7 @@ int main(void) {
             {"testStateIncludesAdminSections", testStateIncludesAdminSections},
             {"testTabPayloads", testTabPayloads},
             {"testWebURLValidation", testWebURLValidation},
+            {"testFavoritePayloads", testFavoritePayloads},
         };
         int failed = 0;
         size_t count = sizeof(tests) / sizeof(tests[0]);
