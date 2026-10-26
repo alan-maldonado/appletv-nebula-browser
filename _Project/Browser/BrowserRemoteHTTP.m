@@ -220,6 +220,24 @@ NSDictionary *BrowserRemoteActionPayload(NSString *action, id JSON, NSString **o
         return @{};
     }
 
+    if ([action isEqualToString:@"home"]) {
+        NSMutableDictionary *payload = [NSMutableDictionary dictionary];
+        if ([body[@"useCurrent"] respondsToSelector:@selector(boolValue)] && [body[@"useCurrent"] boolValue]) {
+            payload[@"useCurrent"] = @YES;
+        } else if (body[@"url"] != nil) {
+            if (!BrowserRemoteIsWebURLString(body[@"url"])) {
+                return BrowserRemoteInvalidPayload(outErrorCode, @"invalid-url");
+            }
+            payload[@"url"] = BrowserRemoteTrimmed(body[@"url"]);
+        }
+        if (body[@"launch"] != nil) {
+            if (![@[@"last-session", @"home-page"] containsObject:body[@"launch"]]) {
+                return BrowserRemoteInvalidPayload(outErrorCode, @"invalid-launch");
+            }
+            payload[@"launch"] = body[@"launch"];
+        }
+        return payload.count > 0 ? payload : BrowserRemoteInvalidPayload(outErrorCode, @"invalid-request");
+    }
     if ([action isEqualToString:@"favorites/add"]) {
         if ([body[@"current"] respondsToSelector:@selector(boolValue)] && [body[@"current"] boolValue]) {
             return @{@"current": @YES};

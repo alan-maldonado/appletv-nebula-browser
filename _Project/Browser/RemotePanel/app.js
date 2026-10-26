@@ -3,7 +3,7 @@
 
 // Admin actions turned on so far; their buttons stay disabled until listed here.
 var ENABLED_ACTIONS = ['tabs/switch', 'tabs/close', 'tabs/new',
-  'favorites/add', 'favorites/update', 'favorites/remove', 'favorites/move', 'favorites/open'];
+  'favorites/add', 'favorites/update', 'favorites/remove', 'favorites/move', 'favorites/open', 'home'];
 
 var $ = function (id) { return document.getElementById(id); };
 var state = null;

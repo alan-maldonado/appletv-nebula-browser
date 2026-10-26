@@ -291,6 +291,22 @@ static void testFavoritePayloads(void) {
     EXPECT([remove[@"index"] integerValue] == 1 && [remove[@"url"] isEqualToString:@"https://b.com"], @"remove %@", remove);
 }
 
+static void testHomePayload(void) {
+    NSString *error = nil;
+    NSDictionary *launch = BrowserRemoteActionPayload(@"home", @{@"launch": @"home-page"}, &error);
+    EXPECT([launch[@"launch"] isEqualToString:@"home-page"] && error == nil, @"launch %@ %@", launch, error);
+    EXPECT(BrowserRemoteActionPayload(@"home", @{@"launch": @"sometimes"}, &error) == nil && [error isEqualToString:@"invalid-launch"], @"bad launch %@", error);
+    error = nil;
+    EXPECT(BrowserRemoteActionPayload(@"home", @{@"url": @"notaurl"}, &error) == nil && [error isEqualToString:@"invalid-url"], @"bad url %@", error);
+    error = nil;
+    NSDictionary *useCurrent = BrowserRemoteActionPayload(@"home", @{@"useCurrent": @YES}, &error);
+    EXPECT([useCurrent isEqualToDictionary:@{@"useCurrent": @YES}], @"useCurrent %@", useCurrent);
+    error = nil;
+    EXPECT(BrowserRemoteActionPayload(@"home", @{}, &error) == nil && [error isEqualToString:@"invalid-request"], @"empty %@", error);
+    NSDictionary *url = BrowserRemoteActionPayload(@"home", @{@"url": @" https://www.google.com "}, &error);
+    EXPECT([url[@"url"] isEqualToString:@"https://www.google.com"], @"url %@", url);
+}
+
 int main(void) {
     @autoreleasepool {
         sFailures = [NSMutableArray array];
@@ -319,6 +335,7 @@ int main(void) {
             {"testTabPayloads", testTabPayloads},
             {"testWebURLValidation", testWebURLValidation},
             {"testFavoritePayloads", testFavoritePayloads},
+            {"testHomePayload", testHomePayload},
         };
         int failed = 0;
         size_t count = sizeof(tests) / sizeof(tests[0]);

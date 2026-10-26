@@ -1301,8 +1301,31 @@ static UIColor *kTextColor(void) {
     if ([action hasPrefix:@"favorites/"]) {
         return [self performRemoteFavoriteAction:action payload:payload response:outResponse];
     }
+    if ([action isEqualToString:@"home"]) {
+        return [self performRemoteHomeAction:payload response:outResponse];
+    }
     *outResponse = @{@"error": @"invalid-request"};
     return 400;
+}
+
+- (NSInteger)performRemoteHomeAction:(NSDictionary *)payload response:(NSDictionary **)outResponse {
+    NSString *homeURLString = payload[@"url"];
+    if ([payload[@"useCurrent"] boolValue]) {
+        homeURLString = [self remoteCurrentPageURLString];
+        if (homeURLString == nil) {
+            *outResponse = @{@"error": @"no-current-page"};
+            return 400;
+        }
+    }
+    if (homeURLString != nil) {
+        self.preferencesStore.homePageURLString = homeURLString;
+    }
+    if (payload[@"launch"] != nil) {
+        self.preferencesStore.launchPageMode = [payload[@"launch"] isEqualToString:@"home-page"] ? 1 : 0;
+    }
+    // NSUserDefaultsDidChangeNotification republishes too; do it now so the reply's state is current.
+    [self publishRemoteState];
+    return 200;
 }
 
 // The active web page as a favorite/home candidate, or nil when it isn't an http(s) page.
