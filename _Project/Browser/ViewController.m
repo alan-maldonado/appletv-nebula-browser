@@ -1291,6 +1291,31 @@ static UIColor *kTextColor(void) {
 
 #pragma mark - BrowserRemoteServerDelegate
 
+- (void)remoteServer:(BrowserRemoteServer *)server trackpadMoveBy:(CGPoint)delta {
+    [self.remoteInputController remoteMoveCursorBy:delta];
+}
+
+- (void)remoteServer:(BrowserRemoteServer *)server trackpadScrollBy:(CGPoint)delta {
+    [self.remoteInputController remoteScrollBy:delta];
+}
+
+- (void)remoteServerTrackpadClick:(BrowserRemoteServer *)server {
+    [self.remoteInputController remoteClick];
+}
+
+- (void)remoteServerTrackpadDoubleClick:(BrowserRemoteServer *)server {
+    [self.remoteInputController remoteDoubleClick];
+}
+
+- (NSDictionary *)remoteServerCursorState:(BrowserRemoteServer *)server {
+    CGPoint aimPoint = [self.remoteInputController cursorAimPoint];
+    return @{
+        @"x": @(aimPoint.x),
+        @"y": @(aimPoint.y),
+        @"mode": self.remoteInputController.cursorModeEnabled ? @"cursor" : @"scroll",
+    };
+}
+
 - (NSInteger)remoteServer:(BrowserRemoteServer *)server
             performAction:(NSString *)action
                   payload:(NSDictionary *)payload

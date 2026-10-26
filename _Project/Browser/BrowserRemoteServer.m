@@ -4,6 +4,7 @@
 
 #import "BrowserRemoteHTTP.h"
 #import "BrowserRemoteState.h"
+#import "BrowserRemoteWebSocket.h"
 
 static NSUInteger const kBrowserRemoteMaxConnections = 8;
 static NSTimeInterval const kBrowserRemoteReceiveTimeout = 10.0;
@@ -17,6 +18,12 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
 @property (nonatomic) NSMutableData *buffer;
 @property (nonatomic) BOOL parked;    // waiting long-poll
 @property (nonatomic) BOOL finished;  // replied or cancelled
+@property (nonatomic) BOOL webSocket; // upgraded trackpad connection
+// Trackpad deltas accumulated on the server queue; at most one hop to main per kind.
+@property (nonatomic) CGPoint pendingMove;
+@property (nonatomic) CGPoint pendingScroll;
+@property (nonatomic) BOOL moveScheduled;
+@property (nonatomic) BOOL scrollScheduled;
 
 @end
 
@@ -108,9 +115,13 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
     }
     self.port = 0;
     dispatch_async(self.queue, ^{
-        for (BrowserRemoteConnection *client in self.connections) {
-            client.finished = YES;
-            nw_connection_cancel(client.connection);
+        for (BrowserRemoteConnection *client in [self.connections copy]) {
+            if (client.webSocket) {
+                [self closeWebSocket:client code:1001]; // going away
+            } else {
+                client.finished = YES;
+                nw_connection_cancel(client.connection);
+            }
         }
         [self.connections removeAllObjects];
     });
@@ -144,7 +155,7 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
 
     __weak typeof(self) weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kBrowserRemoteReceiveTimeout * NSEC_PER_SEC)), self.queue, ^{
-        if (!client.finished && !client.parked) {
+        if (!client.finished && !client.parked && !client.webSocket) {
             [weakSelf close:client];
         }
     });
@@ -194,6 +205,8 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
         @"/app.css": @"GET",
         @"/app.js": @"GET",
         @"/apple-touch-icon.png": @"GET",
+        @"/api/trackpad": @"GET",
+        @"/api/cursor": @"GET",
         @"/api/state": @"GET",
         @"/api/open": @"POST",
         @"/api/field": @"POST",
@@ -230,6 +243,16 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
         @"/app.css": @[@"app", @"css", @"text/css; charset=utf-8"],
         @"/app.js": @[@"app", @"js", @"application/javascript; charset=utf-8"],
     };
+    if ([request.path isEqualToString:@"/api/trackpad"]) {
+        [self upgradeTrackpadClient:client request:request];
+        return;
+    }
+    if ([request.path isEqualToString:@"/api/cursor"]) {
+        [self onMain:client respond:^NSData *{
+            return BrowserRemoteJSONResponseData(200, [self.delegate remoteServerCursorState:self] ?: @{});
+        }];
+        return;
+    }
     NSArray<NSString *> *staticFile = staticFiles[request.path];
     if (staticFile != nil) {
         // Whitelisted panel files from the bundle's RemotePanel folder; nothing else is served.
@@ -360,6 +383,173 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
     client.parked = NO;
     [self.connections removeObject:client];
     nw_connection_cancel(client.connection);
+}
+
+#pragma mark - Trackpad WebSocket (server queue)
+
+- (void)upgradeTrackpadClient:(BrowserRemoteConnection *)client request:(BrowserRemoteRequest *)request {
+    if (!BrowserRemoteRequestIsWebSocketUpgrade(request)) {
+        [self finish:client data:BrowserRemoteJSONResponseData(400, @{@"error": @"websocket-required"})];
+        return;
+    }
+    // Frames may already follow the request in the buffer: keep the bytes after the headers.
+    NSData *terminator = [NSData dataWithBytes:"\r\n\r\n" length:4];
+    NSRange headerEnd = [client.buffer rangeOfData:terminator options:0 range:NSMakeRange(0, client.buffer.length)];
+    NSUInteger frameStart = NSMaxRange(headerEnd);
+    client.buffer = [[client.buffer subdataWithRange:NSMakeRange(frameStart, client.buffer.length - frameStart)] mutableCopy];
+    client.webSocket = YES;
+    [self send:BrowserRemoteWebSocketHandshakeResponse(request.headers[@"sec-websocket-key"]) to:client];
+    if ([self processWebSocketFrames:client]) {
+        [self receiveWebSocket:client];
+    }
+}
+
+- (void)receiveWebSocket:(BrowserRemoteConnection *)client {
+    __weak typeof(self) weakSelf = self;
+    nw_connection_receive(client.connection, 1, 65536, ^(dispatch_data_t content, __unused nw_content_context_t context, bool isComplete, nw_error_t error) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (strongSelf == nil || client.finished) {
+            return;
+        }
+        if (content != nil) {
+            dispatch_data_apply(content, ^bool(__unused dispatch_data_t region, __unused size_t offset, const void *bytes, size_t size) {
+                [client.buffer appendBytes:bytes length:size];
+                return true;
+            });
+        }
+        if (![strongSelf processWebSocketFrames:client]) {
+            return;
+        }
+        if (error != nil || isComplete) {
+            [strongSelf close:client];
+        } else {
+            [strongSelf receiveWebSocket:client];
+        }
+    });
+}
+
+// Handles every complete frame in the buffer. Returns NO once the connection is closing.
+- (BOOL)processWebSocketFrames:(BrowserRemoteConnection *)client {
+    while (!client.finished) {
+        BrowserRemoteFrame *frame = nil;
+        NSUInteger consumed = 0;
+        BrowserRemoteFrameStatus status = BrowserRemoteDecodeFrame(client.buffer, &frame, &consumed);
+        if (status == BrowserRemoteFrameStatusIncomplete) {
+            return YES;
+        }
+        if (status == BrowserRemoteFrameStatusProtocolError || status == BrowserRemoteFrameStatusTooLarge) {
+            [self closeWebSocket:client code:status == BrowserRemoteFrameStatusTooLarge ? 1009 : 1002];
+            return NO;
+        }
+        [client.buffer replaceBytesInRange:NSMakeRange(0, consumed) withBytes:NULL length:0];
+        switch (frame.opcode) {
+            case 1:
+                [self handleTrackpadMessage:frame.payload client:client];
+                break;
+            case 8:
+                [self closeWebSocket:client code:1000];
+                return NO;
+            case 9:
+                [self send:BrowserRemoteEncodeFrame(10, frame.payload) to:client];
+                break;
+            default:
+                break; // pong
+        }
+    }
+    return NO;
+}
+
+- (void)handleTrackpadMessage:(NSData *)payload client:(BrowserRemoteConnection *)client {
+    double dx = 0.0, dy = 0.0;
+    BrowserRemoteTrackpadKind kind = BrowserRemoteParseTrackpadMessage(payload, &dx, &dy);
+    switch (kind) {
+        case BrowserRemoteTrackpadKindMove:
+            client.pendingMove = CGPointMake(client.pendingMove.x + dx, client.pendingMove.y + dy);
+            if (!client.moveScheduled) {
+                client.moveScheduled = YES;
+                [self deliverPendingMoveForClient:client];
+            }
+            break;
+        case BrowserRemoteTrackpadKindScroll:
+            client.pendingScroll = CGPointMake(client.pendingScroll.x + dx, client.pendingScroll.y + dy);
+            if (!client.scrollScheduled) {
+                client.scrollScheduled = YES;
+                [self deliverPendingScrollForClient:client];
+            }
+            break;
+        case BrowserRemoteTrackpadKindClick:
+        case BrowserRemoteTrackpadKindDoubleClick: {
+            BOOL isDouble = kind == BrowserRemoteTrackpadKindDoubleClick;
+            // Apply the movement that preceded the click first, so it lands where aimed.
+            CGPoint move = client.pendingMove;
+            CGPoint scroll = client.pendingScroll;
+            client.pendingMove = CGPointZero;
+            client.pendingScroll = CGPointZero;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (!CGPointEqualToPoint(move, CGPointZero)) {
+                    [self.delegate remoteServer:self trackpadMoveBy:move];
+                }
+                if (!CGPointEqualToPoint(scroll, CGPointZero)) {
+                    [self.delegate remoteServer:self trackpadScrollBy:scroll];
+                }
+                if (isDouble) {
+                    [self.delegate remoteServerTrackpadDoubleClick:self];
+                } else {
+                    [self.delegate remoteServerTrackpadClick:self];
+                }
+            });
+            break;
+        }
+        case BrowserRemoteTrackpadKindNone:
+            break; // malformed or unknown message: ignored
+    }
+}
+
+// One hop to main per kind at a time: deltas that arrive while it waits are summed,
+// so a busy main thread never builds a backlog (the cursor stops when the finger does).
+- (void)deliverPendingMoveForClient:(BrowserRemoteConnection *)client {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        __block CGPoint delta = CGPointZero;
+        dispatch_sync(self.queue, ^{
+            delta = client.pendingMove;
+            client.pendingMove = CGPointZero;
+            client.moveScheduled = NO;
+        });
+        if (!CGPointEqualToPoint(delta, CGPointZero)) {
+            [self.delegate remoteServer:self trackpadMoveBy:delta];
+        }
+    });
+}
+
+- (void)deliverPendingScrollForClient:(BrowserRemoteConnection *)client {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        __block CGPoint delta = CGPointZero;
+        dispatch_sync(self.queue, ^{
+            delta = client.pendingScroll;
+            client.pendingScroll = CGPointZero;
+            client.scrollScheduled = NO;
+        });
+        if (!CGPointEqualToPoint(delta, CGPointZero)) {
+            [self.delegate remoteServer:self trackpadScrollBy:delta];
+        }
+    });
+}
+
+- (void)send:(NSData *)data to:(BrowserRemoteConnection *)client {
+    NSData *payload = [data copy];
+    dispatch_data_t content = dispatch_data_create(payload.bytes, payload.length, self.queue, ^{
+        (void)payload;
+    });
+    // is_complete must be true: an open default-context message would block the final
+    // (close) send queued behind it. On TCP this only delimits the message.
+    nw_connection_send(client.connection, content, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT, true, ^(__unused nw_error_t error) {});
+}
+
+- (void)closeWebSocket:(BrowserRemoteConnection *)client code:(uint16_t)code {
+    if (client.finished) {
+        return;
+    }
+    [self finish:client data:BrowserRemoteCloseFrame(code)];
 }
 
 @end

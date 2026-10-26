@@ -60,6 +60,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setCursorModeEnabled:(BOOL)cursorModeEnabled;
 - (void)refreshInteractionState;
 
+// Nebula Remote trackpad (main thread). Move and click turn cursor mode on if needed.
+- (void)remoteMoveCursorBy:(CGPoint)delta;
+- (void)remoteScrollBy:(CGPoint)delta;
+- (void)remoteClick;
+- (void)remoteDoubleClick;
+
 @end
 
 NS_ASSUME_NONNULL_END

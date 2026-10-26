@@ -1,3 +1,4 @@
+#import <CoreGraphics/CoreGraphics.h>
 #import <Foundation/Foundation.h>
 
 @class BrowserRemoteServer;
@@ -22,6 +23,13 @@ NS_ASSUME_NONNULL_BEGIN
             performAction:(NSString *)action
                   payload:(NSDictionary *)payload
                  response:(NSDictionary * _Nullable * _Nonnull)outResponse;
+// Trackpad (WebSocket /api/trackpad). Deltas are in TV points, already coalesced.
+- (void)remoteServer:(BrowserRemoteServer *)server trackpadMoveBy:(CGPoint)delta;
+- (void)remoteServer:(BrowserRemoteServer *)server trackpadScrollBy:(CGPoint)delta;
+- (void)remoteServerTrackpadClick:(BrowserRemoteServer *)server;
+- (void)remoteServerTrackpadDoubleClick:(BrowserRemoteServer *)server;
+// GET /api/cursor: {x, y, mode} for diagnostics/tests.
+- (NSDictionary *)remoteServerCursorState:(BrowserRemoteServer *)server;
 // PNG for the iOS home-screen icon (GET /apple-touch-icon.png); nil answers 404.
 - (nullable NSData *)remoteServerTouchIconPNG:(BrowserRemoteServer *)server;
 

@@ -560,17 +560,8 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
         if (self.lastTouchLocation.x == -1 && self.lastTouchLocation.y == -1) {
             self.lastTouchLocation = location;
         } else {
-            CGFloat xDiff = location.x - self.lastTouchLocation.x;
-            CGFloat yDiff = location.y - self.lastTouchLocation.y;
-            CGRect rect = self.cursorView.frame;
-
-            if (rect.origin.x + xDiff >= 0 && rect.origin.x + xDiff <= 1920) {
-                rect.origin.x += xDiff;
-            }
-            if (rect.origin.y + yDiff >= 0 && rect.origin.y + yDiff <= 1080) {
-                rect.origin.y += yDiff;
-            }
-            self.cursorView.frame = rect;
+            [self moveCursorByDelta:CGPointMake(location.x - self.lastTouchLocation.x,
+                                                location.y - self.lastTouchLocation.y)];
             self.lastTouchLocation = location;
         }
 
@@ -639,6 +630,64 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
         frame.origin.x += showingPointer ? -kBrowserPointerHotspotOffsetX : kBrowserPointerHotspotOffsetX;
         self.cursorView.frame = frame;
     }
+}
+
+// Moves the cursor, keeping its origin inside the 1920x1080 screen.
+- (void)moveCursorByDelta:(CGPoint)delta {
+    CGRect rect = self.cursorView.frame;
+    rect.origin.x = MAX(0.0, MIN(1920.0, rect.origin.x + delta.x));
+    rect.origin.y = MAX(0.0, MIN(1080.0, rect.origin.y + delta.y));
+    self.cursorView.frame = rect;
+}
+
+#pragma mark - Nebula Remote trackpad
+
+- (BOOL)remoteCursorInputBlocked {
+    return [self.host browserRemoteInputControllerTopBarFocusActive] ||
+        [self.host browserRemoteInputControllerTabOverviewVisible];
+}
+
+- (void)ensureCursorModeForRemote {
+    if (!self.cursorModeEnabled) {
+        [self setCursorModeEnabled:YES];
+    }
+}
+
+- (void)remoteMoveCursorBy:(CGPoint)delta {
+    if ([self remoteCursorInputBlocked]) {
+        return;
+    }
+    [self ensureCursorModeForRemote];
+    [self moveCursorByDelta:delta];
+    [self requestHoverStateUpdate];
+}
+
+- (void)remoteScrollBy:(CGPoint)delta {
+    if ([self remoteCursorInputBlocked]) {
+        return;
+    }
+    [self applyManualScrollDelta:delta];
+}
+
+- (void)remoteClick {
+    if ([self.host browserRemoteInputControllerTabOverviewVisible]) {
+        [self.host browserRemoteInputControllerHandleTabOverviewSelectionAtPoint:[self cursorAimPoint]];
+        return;
+    }
+    if ([self.host browserRemoteInputControllerTopBarFocusActive]) {
+        return;
+    }
+    [self ensureCursorModeForRemote];
+    // The panel already told click from double click: act now, without the 0.3 s wait.
+    [self.host browserRemoteInputControllerHandlePrimaryAction];
+}
+
+- (void)remoteDoubleClick {
+    if ([self remoteCursorInputBlocked]) {
+        return;
+    }
+    [self ensureCursorModeForRemote];
+    [self.host browserRemoteInputControllerFullscreenVideoAtCursorWithCompletion:^(__unused BOOL found) {}];
 }
 
 - (CGPoint)cursorAimPoint {
