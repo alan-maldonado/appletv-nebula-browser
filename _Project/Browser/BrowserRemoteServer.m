@@ -1,6 +1,7 @@
 #import "BrowserRemoteServer.h"
 
 #import <Network/Network.h>
+#import <QuartzCore/QuartzCore.h>
 
 #import "BrowserRemoteHTTP.h"
 #import "BrowserRemoteState.h"
@@ -9,6 +10,9 @@
 static NSUInteger const kBrowserRemoteMaxConnections = 8;
 static NSTimeInterval const kBrowserRemoteReceiveTimeout = 10.0;
 static NSTimeInterval const kBrowserRemoteLongPollTimeout = 25.0;
+// A trackpad socket with no frames (moves or the panel's 20 s keepalive) for this long
+// is closed, so idle/half-open sockets can't hold the 8 connection slots.
+static NSTimeInterval const kBrowserRemoteWebSocketIdleTimeout = 60.0;
 static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
 
 // One client connection. Only touched on the server queue.
@@ -24,6 +28,7 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
 @property (nonatomic) CGPoint pendingScroll;
 @property (nonatomic) BOOL moveScheduled;
 @property (nonatomic) BOOL scrollScheduled;
+@property (nonatomic) CFTimeInterval lastFrameTime;
 
 @end
 
@@ -392,13 +397,19 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
         [self finish:client data:BrowserRemoteJSONResponseData(400, @{@"error": @"websocket-required"})];
         return;
     }
+    if (!BrowserRemoteWebSocketOriginAllowed(request)) {
+        [self finish:client data:BrowserRemoteJSONResponseData(403, @{@"error": @"cross-origin"})];
+        return;
+    }
     // Frames may already follow the request in the buffer: keep the bytes after the headers.
     NSData *terminator = [NSData dataWithBytes:"\r\n\r\n" length:4];
     NSRange headerEnd = [client.buffer rangeOfData:terminator options:0 range:NSMakeRange(0, client.buffer.length)];
     NSUInteger frameStart = NSMaxRange(headerEnd);
     client.buffer = [[client.buffer subdataWithRange:NSMakeRange(frameStart, client.buffer.length - frameStart)] mutableCopy];
     client.webSocket = YES;
+    client.lastFrameTime = CACurrentMediaTime();
     [self send:BrowserRemoteWebSocketHandshakeResponse(request.headers[@"sec-websocket-key"]) to:client];
+    [self scheduleIdleCheckForClient:client];
     if ([self processWebSocketFrames:client]) {
         [self receiveWebSocket:client];
     }
@@ -442,6 +453,7 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
             return NO;
         }
         [client.buffer replaceBytesInRange:NSMakeRange(0, consumed) withBytes:NULL length:0];
+        client.lastFrameTime = CACurrentMediaTime();
         switch (frame.opcode) {
             case 1:
                 [self handleTrackpadMessage:frame.payload client:client];
@@ -532,6 +544,21 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
         if (!CGPointEqualToPoint(delta, CGPointZero)) {
             [self.delegate remoteServer:self trackpadScrollBy:delta];
         }
+    });
+}
+
+- (void)scheduleIdleCheckForClient:(BrowserRemoteConnection *)client {
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kBrowserRemoteWebSocketIdleTimeout / 3.0 * NSEC_PER_SEC)), self.queue, ^{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (strongSelf == nil || client.finished) {
+            return;
+        }
+        if (CACurrentMediaTime() - client.lastFrameTime >= kBrowserRemoteWebSocketIdleTimeout) {
+            [strongSelf closeWebSocket:client code:1001];
+            return;
+        }
+        [strongSelf scheduleIdleCheckForClient:client];
     });
 }
 

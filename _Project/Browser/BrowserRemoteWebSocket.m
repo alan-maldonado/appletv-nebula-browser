@@ -49,6 +49,21 @@ NSData *BrowserRemoteWebSocketHandshakeResponse(NSString *key) {
     return [response dataUsingEncoding:NSUTF8StringEncoding];
 }
 
+BOOL BrowserRemoteWebSocketOriginAllowed(BrowserRemoteRequest *request) {
+    NSString *origin = request.headers[@"origin"];
+    if (origin == nil) {
+        return YES;
+    }
+    NSURLComponents *components = [NSURLComponents componentsWithString:origin];
+    if (components.host.length == 0) {
+        return NO; // "null" and other opaque origins
+    }
+    NSString *originHost = components.port != nil
+        ? [NSString stringWithFormat:@"%@:%@", components.host, components.port]
+        : components.host;
+    return [originHost.lowercaseString isEqualToString:[request.headers[@"host"] lowercaseString]];
+}
+
 BrowserRemoteFrameStatus BrowserRemoteDecodeFrame(NSData *buffer, BrowserRemoteFrame **outFrame, NSUInteger *outConsumed) {
     const uint8_t *bytes = buffer.bytes;
     NSUInteger length = buffer.length;

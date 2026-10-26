@@ -34,10 +34,11 @@ def cursor():
         return json.loads(response.read())
 
 
-def connect():
+def connect(origin=None):
     sock = socket.create_connection((HOST, PORT), timeout=5)
     key = base64.b64encode(os.urandom(16)).decode()
-    sock.sendall((f"GET /api/trackpad HTTP/1.1\r\nHost: {TARGET}\r\nUpgrade: websocket\r\n"
+    origin_header = f"Origin: {origin}\r\n" if origin else ""
+    sock.sendall((f"GET /api/trackpad HTTP/1.1\r\nHost: {TARGET}\r\nUpgrade: websocket\r\n{origin_header}"
                   f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
     response = b""
     while b"\r\n\r\n" not in response:
@@ -97,6 +98,14 @@ sock, response, expected = connect()
 report("handshake", response.startswith("HTTP/1.1 101") and f"Sec-WebSocket-Accept: {expected}" in response,
        response.splitlines()[0] if response else "no response")
 
+# origin (cross-site WebSocket hijacking guard)
+evil, evil_response, _ = connect("https://evil.example.com")
+evil.close()
+panel, panel_response, _ = connect(f"http://{TARGET}")
+panel.close()
+report("origin", evil_response.startswith("HTTP/1.1 403") and panel_response.startswith("HTTP/1.1 101"),
+       f"evil -> {evil_response.splitlines()[0] if evil_response else 'none'}, panel -> {panel_response.splitlines()[0] if panel_response else 'none'}")
+
 # click-in-scroll-mode (before moving, which would switch modes on its own)
 start = cursor()
 if start["mode"] == "scroll":
@@ -153,5 +162,19 @@ sock.sendall(frame(1, b'{"t":"c"}', masked=False))
 code = read_close_code(sock)
 report("unmasked", code == 1002, f"server close code {code}")
 sock.close()
+
+# idle-timeout (slow: only with --idle)
+if "--idle" in sys.argv:
+    idle, _, _ = connect()
+    idle.settimeout(75)
+    started = time.time()
+    try:
+        data = idle.recv(64)
+        code = struct.unpack(">H", data[2:4])[0] if len(data) >= 4 and data[0] & 0x0F == 8 else None
+    except socket.timeout:
+        code = None
+    waited = time.time() - started
+    report("idle-timeout", code == 1001 and 55 <= waited <= 75, f"close {code} after {waited:.0f}s")
+    idle.close()
 
 sys.exit(1 if failures else 0)

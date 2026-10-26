@@ -102,6 +102,7 @@ function sendOpen(newTab) {
 
 function sendField() {
   if (!field) { return; }
+  padRelockAfterField(); // must run inside the click/Enter gesture, before any await
   post('/api/field', { id: field.id, text: $('fieldInput').value, submit: $('fieldSubmit').checked }).then(function (result) {
     if (result.ok) { toast('fieldToast', 'Enviado'); }
     else if (result.status === 409) { toast('fieldToast', 'El campo ya no está activo en la TV', true); }
@@ -117,6 +118,7 @@ function renderField(next) {
     $('fieldInput').value = next.value || '';
     $('fieldSubmit').checked = false;
     $('fieldCard').hidden = false;
+    padRelease();
     $('fieldInput').focus();
   }
   if (!next) { $('fieldCard').hidden = true; }
@@ -290,10 +292,16 @@ function padStatus(connected) {
 function padOpen() {
   pad.wanted = true;
   if (pad.socket) { return; }
+  if (document.hidden) { return; } // reopened on visibilitychange
   var socket = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/trackpad');
   pad.socket = socket;
-  socket.onopen = function () { pad.failures = 0; padStatus(true); };
+  socket.onopen = function () {
+    if (pad.socket !== socket) { return; }
+    pad.failures = 0;
+    padStatus(true);
+  };
   socket.onclose = function () {
+    if (pad.socket !== socket) { return; } // a superseded socket closing late
     pad.socket = null;
     padStatus(false);
     if (!pad.wanted) { return; }
@@ -304,8 +312,17 @@ function padOpen() {
 
 function padClose() {
   pad.wanted = false;
+  padRelease();
   clearTimeout(pad.retry);
   if (pad.socket) { pad.socket.close(1000); pad.socket = null; }
+  padStatus(false);
+}
+
+// Hidden tabs and sleeping phones must not hold one of the server's 8 connection slots:
+// drop the socket while hidden (the server also closes it after 60 s without frames).
+function padSuspend() {
+  clearTimeout(pad.retry);
+  if (pad.socket) { var socket = pad.socket; pad.socket = null; socket.close(1000); }
   padStatus(false);
 }
 
@@ -340,6 +357,15 @@ function padDeferredClick(delay) {
 function padCancelClick() { clearTimeout(pad.clickTimer); pad.clickTimer = null; }
 
 function padLocked() { return document.pointerLockElement === $('pad'); }
+
+// When the TV asks for text, give the mouse back so the "Nebula pide" field can be
+// typed into; sending it (a user gesture, which pointer lock requires) recaptures it.
+function padRelease() {
+  if (padLocked()) { pad.relockAfterField = true; document.exitPointerLock(); }
+}
+function padRelockAfterField() {
+  if (pad.relockAfterField && !TOUCH) { pad.relockAfterField = false; $('pad').requestPointerLock(); }
+}
 
 function setupPad() {
   var area = $('pad');
@@ -411,6 +437,10 @@ function setupPad() {
   }, { passive: false });
 
   window.addEventListener('pagehide', padClose);
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) { padSuspend(); } else if (pad.wanted) { padOpen(); }
+  });
+  setInterval(function () { padSend({ t: 'k' }); }, 20000); // keepalive for the idle timeout
   if (DESKTOP.matches) { padOpen(); }
 }
 

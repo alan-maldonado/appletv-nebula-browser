@@ -427,6 +427,15 @@ static void testParsesTrackpadMessages(void) {
     EXPECT(ParseMessage(@"{\"t\":\"m\",\"dx\":\"a\"}", &dx, &dy) == BrowserRemoteTrackpadKindNone, @"string delta");
 }
 
+static void testWebSocketOriginMustMatchHost(void) {
+    NSString *base = @"GET /api/trackpad HTTP/1.1\r\nHost: alans-apple-tv-4k.local:8080\r\n";
+    EXPECT(BrowserRemoteWebSocketOriginAllowed(ParsedRequest([base stringByAppendingString:@"\r\n"])), @"no Origin (native client) rejected");
+    EXPECT(BrowserRemoteWebSocketOriginAllowed(ParsedRequest([base stringByAppendingString:@"Origin: http://Alans-Apple-TV-4K.local:8080\r\n\r\n"])), @"same-origin panel rejected");
+    EXPECT(!BrowserRemoteWebSocketOriginAllowed(ParsedRequest([base stringByAppendingString:@"Origin: https://evil.example.com\r\n\r\n"])), @"cross-site origin accepted");
+    EXPECT(!BrowserRemoteWebSocketOriginAllowed(ParsedRequest([base stringByAppendingString:@"Origin: http://alans-apple-tv-4k.local:9999\r\n\r\n"])), @"other port accepted");
+    EXPECT(!BrowserRemoteWebSocketOriginAllowed(ParsedRequest([base stringByAppendingString:@"Origin: null\r\n\r\n"])), @"null origin accepted");
+}
+
 int main(void) {
     @autoreleasepool {
         sFailures = [NSMutableArray array];
@@ -465,6 +474,7 @@ int main(void) {
             {"testRejectsOversizedPayload", testRejectsOversizedPayload},
             {"testEncodesCloseAndPong", testEncodesCloseAndPong},
             {"testParsesTrackpadMessages", testParsesTrackpadMessages},
+            {"testWebSocketOriginMustMatchHost", testWebSocketOriginMustMatchHost},
         };
         int failed = 0;
         size_t count = sizeof(tests) / sizeof(tests[0]);

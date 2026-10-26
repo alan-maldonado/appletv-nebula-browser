@@ -27,6 +27,10 @@ typedef NS_ENUM(NSInteger, BrowserRemoteFrameStatus) {
 NSString *BrowserRemoteWebSocketAccept(NSString *key);
 BOOL BrowserRemoteRequestIsWebSocketUpgrade(BrowserRemoteRequest *request);
 NSData *BrowserRemoteWebSocketHandshakeResponse(NSString *key);
+// Cross-site WebSocket hijacking guard: browsers don't apply CORS to WebSockets, so a
+// page from another site must be refused. Allowed when there is no Origin (native
+// clients) or when Origin's host:port equals the Host header.
+BOOL BrowserRemoteWebSocketOriginAllowed(BrowserRemoteRequest *request);
 
 // Decodes the first frame in buffer; *outConsumed is the frame's byte length when
 // the status is Frame.

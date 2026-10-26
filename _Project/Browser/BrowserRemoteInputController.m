@@ -642,9 +642,12 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
 
 #pragma mark - Nebula Remote trackpad
 
+// Same gates as the Siri Remote: nothing reaches the page while the top bar has focus,
+// the tab overview is up, or something (keyboard, alert, menu) is presented over it.
 - (BOOL)remoteCursorInputBlocked {
     return [self.host browserRemoteInputControllerTopBarFocusActive] ||
-        [self.host browserRemoteInputControllerTabOverviewVisible];
+        [self.host browserRemoteInputControllerTabOverviewVisible] ||
+        [self.host browserRemoteInputControllerPresentedViewController] != nil;
 }
 
 - (void)ensureCursorModeForRemote {
@@ -674,7 +677,7 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
         [self.host browserRemoteInputControllerHandleTabOverviewSelectionAtPoint:[self cursorAimPoint]];
         return;
     }
-    if ([self.host browserRemoteInputControllerTopBarFocusActive]) {
+    if ([self remoteCursorInputBlocked]) {
         return;
     }
     [self ensureCursorModeForRemote];
