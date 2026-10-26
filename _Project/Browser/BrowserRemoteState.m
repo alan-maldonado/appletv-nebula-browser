@@ -3,9 +3,7 @@
 @interface BrowserRemoteState ()
 
 @property (nonatomic, readwrite) NSUInteger version;
-@property (nonatomic, copy) NSString *pageTitle;
-@property (nonatomic, copy) NSString *pageURLString;
-@property (nonatomic, copy, nullable) NSDictionary<NSString *, NSString *> *field;
+@property (nonatomic) NSMutableDictionary<NSString *, id> *sections;
 
 @end
 
@@ -15,37 +13,55 @@
     self = [super init];
     if (self) {
         _version = 1;
-        _pageTitle = @"";
-        _pageURLString = @"";
+        _sections = [@{
+            @"page": @{@"title": @"", @"url": @""},
+            @"field": NSNull.null,
+            @"tabs": @[],
+            @"favorites": @[],
+            @"home": @{@"url": @"", @"launch": @"last-session"},
+            @"theme": @{@"accent": @"#7B6CDE", @"onAccent": @"#FFFFFF"},
+        } mutableCopy];
     }
     return self;
 }
 
-- (void)updatePageTitle:(NSString *)title URLString:(NSString *)URLString {
-    NSString *newTitle = title ?: @"";
-    NSString *newURLString = URLString ?: @"";
-    if ([newTitle isEqualToString:self.pageTitle] && [newURLString isEqualToString:self.pageURLString]) {
+// Stores a section and bumps the version only when its value changed.
+- (void)setSection:(NSString *)key value:(id)value {
+    if ([self.sections[key] isEqual:value]) {
         return;
     }
-    self.pageTitle = newTitle;
-    self.pageURLString = newURLString;
+    self.sections[key] = [value copy];
     self.version += 1;
+}
+
+- (void)updatePageTitle:(NSString *)title URLString:(NSString *)URLString {
+    [self setSection:@"page" value:@{@"title": title ?: @"", @"url": URLString ?: @""}];
 }
 
 - (void)updateField:(NSDictionary<NSString *, NSString *> *)field {
-    if (field == self.field || [field isEqualToDictionary:self.field]) {
-        return;
-    }
-    self.field = field;
-    self.version += 1;
+    [self setSection:@"field" value:field ?: NSNull.null];
+}
+
+- (void)updateTabs:(NSArray<NSDictionary *> *)tabs {
+    [self setSection:@"tabs" value:tabs ?: @[]];
+}
+
+- (void)updateFavorites:(NSArray<NSDictionary *> *)favorites {
+    [self setSection:@"favorites" value:favorites ?: @[]];
+}
+
+- (void)updateHome:(NSDictionary *)home {
+    [self setSection:@"home" value:home];
+}
+
+- (void)updateTheme:(NSDictionary *)theme {
+    [self setSection:@"theme" value:theme];
 }
 
 - (NSDictionary *)JSONObject {
-    return @{
-        @"v": @(self.version),
-        @"page": @{@"title": self.pageTitle, @"url": self.pageURLString},
-        @"field": self.field ?: NSNull.null,
-    };
+    NSMutableDictionary *JSONObject = [self.sections mutableCopy];
+    JSONObject[@"v"] = @(self.version);
+    return JSONObject;
 }
 
 @end

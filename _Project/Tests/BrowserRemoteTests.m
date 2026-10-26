@@ -230,6 +230,25 @@ static void testMutationPostsNotification(void) {
     EXPECT(posts == 1, @"posts %lu", (unsigned long)posts);
 }
 
+static void testStateIncludesAdminSections(void) {
+    BrowserRemoteState *state = [BrowserRemoteState new];
+    NSDictionary *json = [state JSONObject];
+    EXPECT([json[@"tabs"] isEqual:@[]] && [json[@"favorites"] isEqual:@[]], @"defaults %@", json);
+    EXPECT([json[@"home"][@"launch"] isEqualToString:@"last-session"], @"home %@", json[@"home"]);
+    EXPECT([json[@"theme"][@"accent"] isEqualToString:@"#7B6CDE"], @"theme %@", json[@"theme"]);
+
+    NSArray *tabs = @[@{@"id": @"t1", @"title": @"A", @"url": @"https://a.com", @"active": @YES}];
+    [state updateTabs:tabs];
+    EXPECT(state.version == 2, @"after tabs %lu", (unsigned long)state.version);
+    [state updateTabs:[tabs copy]];
+    EXPECT(state.version == 2, @"same tabs bumped %lu", (unsigned long)state.version);
+    [state updateFavorites:@[@{@"url": @"https://a.com", @"title": @"A"}]];
+    [state updateHome:@{@"url": @"https://a.com", @"launch": @"home-page"}];
+    [state updateTheme:@{@"accent": @"#0A84FF", @"onAccent": @"#FFFFFF"}];
+    EXPECT(state.version == 5, @"after favorites/home/theme %lu", (unsigned long)state.version);
+    EXPECT([[state JSONObject][@"tabs"][0][@"id"] isEqualToString:@"t1"], @"json tabs %@", [state JSONObject]);
+}
+
 int main(void) {
     @autoreleasepool {
         sFailures = [NSMutableArray array];
@@ -254,6 +273,7 @@ int main(void) {
             {"testRemoveWithStaleURLIsRejected", testRemoveWithStaleURLIsRejected},
             {"testMoveAndUpdate", testMoveAndUpdate},
             {"testMutationPostsNotification", testMutationPostsNotification},
+            {"testStateIncludesAdminSections", testStateIncludesAdminSections},
         };
         int failed = 0;
         size_t count = sizeof(tests) / sizeof(tests[0]);

@@ -191,6 +191,8 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
 - (void)route:(BrowserRemoteRequest *)request client:(BrowserRemoteConnection *)client {
     NSDictionary<NSString *, NSString *> *methodsByPath = @{
         @"/": @"GET",
+        @"/app.css": @"GET",
+        @"/app.js": @"GET",
         @"/apple-touch-icon.png": @"GET",
         @"/api/state": @"GET",
         @"/api/open": @"POST",
@@ -214,11 +216,19 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
         return;
     }
 
-    if ([request.path isEqualToString:@"/"]) {
-        [self onMain:client respond:^NSData *{
-            NSString *HTML = [self.delegate remoteServerPageHTML:self] ?: @"";
-            return BrowserRemoteResponseData(200, @"text/html; charset=utf-8", [HTML dataUsingEncoding:NSUTF8StringEncoding]);
-        }];
+    NSDictionary<NSString *, NSArray<NSString *> *> *staticFiles = @{
+        @"/": @[@"index", @"html", @"text/html; charset=utf-8"],
+        @"/app.css": @[@"app", @"css", @"text/css; charset=utf-8"],
+        @"/app.js": @[@"app", @"js", @"application/javascript; charset=utf-8"],
+    };
+    NSArray<NSString *> *staticFile = staticFiles[request.path];
+    if (staticFile != nil) {
+        // Whitelisted panel files from the bundle's RemotePanel folder; nothing else is served.
+        NSURL *fileURL = [NSBundle.mainBundle URLForResource:staticFile[0] withExtension:staticFile[1] subdirectory:@"RemotePanel"];
+        NSData *contents = fileURL != nil ? [NSData dataWithContentsOfURL:fileURL] : nil;
+        [self finish:client data:contents != nil
+            ? BrowserRemoteResponseData(200, staticFile[2], contents)
+            : BrowserRemoteJSONResponseData(404, @{@"error": @"not-found"})];
     } else if ([request.path isEqualToString:@"/apple-touch-icon.png"]) {
         [self onMain:client respond:^NSData *{
             NSData *PNG = [self.delegate remoteServerTouchIconPNG:self];

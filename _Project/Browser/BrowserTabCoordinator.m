@@ -530,6 +530,7 @@ static CGFloat const kThumbnailStagingOffset = 4096.0;
     if (self.activeWebView.request == nil) {
         [self loadStoredContentForTab:self.activeTab webView:self.activeWebView fallbackToHomePage:YES];
     }
+    [self refreshActiveTabUI];
     [self persistSession];
 }
 

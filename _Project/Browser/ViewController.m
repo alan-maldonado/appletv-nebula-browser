@@ -12,7 +12,7 @@
 #import "BrowserPageActionCoordinator.h"
 #import "BrowserPreferencesStore.h"
 #import "BrowserRemoteInputController.h"
-#import "BrowserRemotePage.h"
+#import "BrowserFavoritesStore.h"
 #import "BrowserRemoteServer.h"
 #import "BrowserRemoteState.h"
 #import "BrowserSessionStore.h"
@@ -325,6 +325,10 @@ static UIColor *kTextColor(void) {
     [self.preferencesStore ensureUserAgentConsistency];
     self.remoteServer = [BrowserRemoteServer new];
     self.remoteServer.delegate = self;
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleUserDefaultsDidChange:)
+                                                 name:NSUserDefaultsDidChangeNotification
+                                               object:nil];
     // Reinstalls reset the alternate icon while the theme preference persists.
     [BrowserMenuCoordinator applyAppIconForCurrentTheme];
 
@@ -460,6 +464,7 @@ static UIColor *kTextColor(void) {
     if (self.preferencesStore.remoteServerEnabled) {
         [self.remoteServer start];
     }
+    [self publishRemoteState];
 }
 
 // Persist or wipe browsing state when leaving the app, per privacy preferences.
@@ -902,6 +907,7 @@ static UIColor *kTextColor(void) {
 
 - (void)browserDidChangeTheme {
     [self.topMenuView applyThemeAccent];
+    [self publishRemoteState];
 }
 
 - (void)browserCaptureSnapshotForCurrentTab {
@@ -952,14 +958,7 @@ static UIColor *kTextColor(void) {
 }
 
 - (void)browserTabCoordinatorActiveTabDidRefresh {
-    BrowserTabViewModel *tab = self.tabCoordinator.activeTab;
-    NSString *URLString = tab.URLString.length > 0 ? tab.URLString : (self.webview.request.URL.absoluteString ?: @"");
-    NSString *title = self.webview.title.length > 0 ? self.webview.title : (tab.title ?: @"");
-    NSUInteger previousVersion = self.remoteServer.state.version;
-    [self.remoteServer.state updatePageTitle:title URLString:URLString];
-    if (self.remoteServer.state.version != previousVersion) {
-        [self.remoteServer stateDidChange];
-    }
+    [self publishRemoteState];
 }
 
 - (void)browserTabCoordinatorUpdateTextFontSize {
@@ -1316,14 +1315,51 @@ static UIColor *kTextColor(void) {
     }
 }
 
-- (NSString *)remoteServerPageHTML:(BrowserRemoteServer *)server {
-    // The page follows the TV's theme accent; light accents (Classic, Gold, Sky) get dark text.
+// Rebuilds every panel section from the live app state; long-polls wake only if something changed.
+- (void)publishRemoteState {
+    BrowserRemoteState *state = self.remoteServer.state;
+    NSUInteger previousVersion = state.version;
+
+    BrowserTabViewModel *activeTab = self.tabCoordinator.activeTab;
+    NSString *pageURLString = activeTab.URLString.length > 0 ? activeTab.URLString : (self.webview.request.URL.absoluteString ?: @"");
+    NSString *pageTitle = self.webview.title.length > 0 ? self.webview.title : (activeTab.title ?: @"");
+    [state updatePageTitle:pageTitle URLString:pageURLString];
+
+    NSMutableArray<NSDictionary *> *tabs = [NSMutableArray array];
+    [self.viewModel.tabs enumerateObjectsUsingBlock:^(BrowserTabViewModel *tab, NSUInteger index, __unused BOOL *stop) {
+        NSString *URLString = tab.URLString.length > 0 ? tab.URLString : (tab.requestURL ?: @"");
+        [tabs addObject:@{
+            @"id": tab.identifier ?: @"",
+            @"title": tab.title ?: @"",
+            @"url": URLString,
+            @"active": @((BOOL)((NSInteger)index == self.viewModel.activeTabIndex)),
+        }];
+    }];
+    [state updateTabs:tabs];
+    [state updateFavorites:[[BrowserFavoritesStore standardStore] favorites]];
+    [state updateHome:@{
+        @"url": self.preferencesStore.homePageURLString ?: @"",
+        @"launch": self.preferencesStore.launchPageMode == 1 ? @"home-page" : @"last-session",
+    }];
+
+    // The panel follows the TV's theme accent; light accents (Classic, Gold, Sky) get dark text.
     CGFloat red = 0.0, green = 0.0, blue = 0.0, alpha = 0.0;
     [self.preferencesStore.themeAccentColor getRed:&red green:&green blue:&blue alpha:&alpha];
     NSString *accentHex = [NSString stringWithFormat:@"#%02X%02X%02X",
                            (int)lround(red * 255.0), (int)lround(green * 255.0), (int)lround(blue * 255.0)];
     CGFloat luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
-    return [BrowserRemotePage HTMLWithAccentHex:accentHex onAccentHex:luminance > 0.6 ? @"#14102A" : @"#FFFFFF"];
+    [state updateTheme:@{@"accent": accentHex, @"onAccent": luminance > 0.6 ? @"#14102A" : @"#FFFFFF"}];
+
+    if (state.version != previousVersion) {
+        [self.remoteServer stateDidChange];
+    }
+}
+
+- (void)handleUserDefaultsDidChange:(NSNotification *)notification {
+    // Favorites, home page and theme all live in NSUserDefaults; may be posted off-main.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self publishRemoteState];
+    });
 }
 
 - (NSData *)remoteServerTouchIconPNG:(BrowserRemoteServer *)server {
