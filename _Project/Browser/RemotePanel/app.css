@@ -132,12 +132,13 @@ footer { text-align: center; color: #8a83a8; font-size: 13px; }
   .sections {
     /* minmax(0, 1fr): a plain 1fr column grows to fit unbreakable content (long titles). */
     display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-areas: "write trackpad" "tabs favorites" "tabs home";
+    grid-template-areas: "write write" "trackpad trackpad" "tabs favorites" "tabs home";
     align-items: start;
   }
   .panel { display: flex; }
   #write { grid-area: write; }
   #trackpad { grid-area: trackpad; }
+  #trackpad .pad { min-height: 300px; }
   #tabs { grid-area: tabs; }
   #favorites { grid-area: favorites; }
   #home { grid-area: home; }
