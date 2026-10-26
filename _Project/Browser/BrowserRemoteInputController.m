@@ -55,6 +55,7 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
 @property (nonatomic, readwrite) UIImageView *cursorView;
 @property (nonatomic, readwrite) UIPanGestureRecognizer *manualScrollPanRecognizer;
 @property (nonatomic, readwrite) UITapGestureRecognizer *playPauseDoubleTapRecognizer;
+@property (nonatomic, readwrite) UILongPressGestureRecognizer *playPauseHoldRecognizer;
 @property (nonatomic, readwrite, getter=isCursorModeEnabled) BOOL cursorModeEnabled;
 @property (nonatomic) CGPoint lastTouchLocation;
 @property (nonatomic) CADisplayLink *manualScrollDisplayLink;
@@ -97,6 +98,16 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
         _playPauseDoubleTapRecognizer.numberOfTapsRequired = 2;
         _playPauseDoubleTapRecognizer.allowedPressTypes = @[@(UIPressTypePlayPause)];
         [rootView addGestureRecognizer:_playPauseDoubleTapRecognizer];
+
+        // Hold (long-press) Play/Pause: hand the page's reported videos to the
+        // native player. Deliberately not chained with the double-tap via
+        // requireGestureRecognizerToFail: double-tap must stay snappy, and a
+        // 0.8s hold never overlaps a quick double-tap in practice.
+        _playPauseHoldRecognizer = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(handlePlayPauseHold:)];
+        _playPauseHoldRecognizer.allowedPressTypes = @[@(UIPressTypePlayPause)];
+        _playPauseHoldRecognizer.minimumPressDuration = 0.8;
+        _playPauseHoldRecognizer.delaysTouchesBegan = NO;
+        [rootView addGestureRecognizer:_playPauseHoldRecognizer];
 
         _manualScrollPanRecognizer = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleManualScrollPan:)];
         _manualScrollPanRecognizer.allowedTouchTypes = @[ @(UITouchTypeIndirect) ];
@@ -273,6 +284,24 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
         return;
     }
     [self.host browserRemoteInputControllerHandleAdvancedMenuPress];
+}
+
+// Hold (long-press) Play/Pause: open the best video the page's frames reported
+// natively (the remote cannot synthesize the mouse events such pages' own play
+// button listens for). Fires once per hold at Began; the gesture coexists with
+// the double-tap recognizer.
+- (void)handlePlayPauseHold:(UILongPressGestureRecognizer *)gestureRecognizer {
+    if (gestureRecognizer.state != UIGestureRecognizerStateBegan) {
+        return;
+    }
+    if ([self.host browserRemoteInputControllerTopBarFocusActive] ||
+        [self.host browserRemoteInputControllerTabOverviewVisible]) {
+        return;
+    }
+    // Default no-op for hosts that don't implement the hold action.
+    if ([self.host respondsToSelector:@selector(browserRemoteInputControllerHandlePlayPauseHold)]) {
+        [self.host browserRemoteInputControllerHandlePlayPauseHold];
+    }
 }
 
 - (void)handleManualScrollPan:(UIPanGestureRecognizer *)gestureRecognizer {
@@ -495,6 +524,13 @@ static NSString *BrowserPressPhaseString(UIPressPhase phase) {
         return YES;
     }
     if (press.type == UIPressTypePlayPause) {
+        // Single press toggles the page's own video both ways first (WebKit
+        // pauses on the first press and never resumes); with nothing to toggle
+        // the legacy press behavior (search box / alert dismiss) runs.
+        if ([self.host respondsToSelector:@selector(browserRemoteInputControllerHandlePlayPauseToggleInPageVideo)] &&
+            [self.host browserRemoteInputControllerHandlePlayPauseToggleInPageVideo]) {
+            return YES;
+        }
         [self.host browserRemoteInputControllerHandlePlayPausePress];
         return YES;
     }

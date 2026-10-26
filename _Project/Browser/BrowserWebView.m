@@ -1,6 +1,7 @@
 #import "BrowserWebView.h"
 
 #import <dlfcn.h>
+#import <mach/mach.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
 
@@ -64,6 +65,9 @@
 
 static NSString * const kBrowserWebViewClassName = @"WKWebView";
 static NSString * const kBrowserFullscreenMessageHandlerName = @"browserFullscreen";
+static NSString * const kBrowserMediaProbeMessageHandlerName = @"browserMediaProbe";
+// Extra key added to each stored probe payload; stripped before handing copies out.
+static NSString * const kBrowserMediaProbeTimestampKey = @"_mediaProbeTimestamp";
 static NSString * const kBrowserWebViewConfigurationClassName = @"WKWebViewConfiguration";
 static NSString * const kBrowserWebsiteDataStoreClassName = @"WKWebsiteDataStore";
 static NSString * const kBrowserUserContentControllerClassName = @"WKUserContentController";
@@ -90,12 +94,24 @@ static void BrowserEnsureWebKitRuntimeLoaded(void) {
     });
 }
 
+// Nesting guard: pumping while a pump is already active re-enters CA commits
+// and WebKit callbacks and exhausts the 1 MB main-thread stack (SIGSEGV).
+// Main-thread only — every caller is a synchronous helper running there.
+static int sBrowserPumpDepth = 0;
+
 // Runs the run loop until *done (set from a completion handler that also calls
 // CFRunLoopStop on this loop) or until the timeout elapses. Event-driven rather
 // than 10ms-polling, so a synchronous JS eval returns the instant its handler
 // fires instead of waiting out a poll tick. The timeout guarantees it can never
 // hang the main thread if the handler never arrives.
-static void BrowserPumpRunLoopUntil(BOOL *done, CFRunLoopRef runLoop) {
+// Returns NO immediately WITHOUT pumping when a pump is already active; callers
+// must degrade gracefully (nil/fallback) on NO. Otherwise returns *done.
+static BOOL BrowserPumpRunLoopUntil(BOOL *done, CFRunLoopRef runLoop) {
+    if (sBrowserPumpDepth > 0) {
+        return NO;
+    }
+
+    sBrowserPumpDepth += 1;
     CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 2.0;
     while (!*done) {
         CFAbsoluteTime remaining = deadline - CFAbsoluteTimeGetCurrent();
@@ -106,6 +122,9 @@ static void BrowserPumpRunLoopUntil(BOOL *done, CFRunLoopRef runLoop) {
             CFRunLoopRunInMode(kCFRunLoopDefaultMode, remaining, true);
         }
     }
+    BOOL finished = *done ? YES : NO;
+    sBrowserPumpDepth -= 1;
+    return finished;
 }
 
 static NSString *BrowserStringFromJavaScriptResult(id result) {
@@ -344,6 +363,7 @@ static void BrowserSetBooleanSelectorIfAvailable(id object, NSString *selectorNa
 }
 
 static void BrowserEnableMediaFeatureFlags(id preferences);
+static void BrowserDisableMatchingMediaFeatures(id preferences);
 
 static void BrowserConfigurePrivateMediaPreferences(id configuration) {
     if (configuration == nil) {
@@ -360,15 +380,26 @@ static void BrowserConfigurePrivateMediaPreferences(id configuration) {
         return;
     }
 
-    BrowserSetBooleanSelectorIfAvailable(preferences, @"_setMediaSourceEnabled:", YES);
-    BrowserSetBooleanSelectorIfAvailable(preferences, @"_setManagedMediaSourceEnabled:", YES);
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"NativeVideoModeDisabled"]) {
+        // Native Video Mode (default ON, the Tanghulu strategy): advertise no
+        // MSE at all so hls.js-style players fall back to a plain
+        // <video src=<real m3u8>> that the AVPlayer-backed element can play.
+        BrowserSetBooleanSelectorIfAvailable(preferences, @"_setMediaSourceEnabled:", NO);
+        BrowserSetBooleanSelectorIfAvailable(preferences, @"_setManagedMediaSourceEnabled:", NO);
+        BrowserDisableMatchingMediaFeatures(preferences);
+    }
+    else {
+        BrowserSetBooleanSelectorIfAvailable(preferences, @"_setMediaSourceEnabled:", YES);
+        BrowserSetBooleanSelectorIfAvailable(preferences, @"_setManagedMediaSourceEnabled:", YES);
+
+        // On modern WebKit (tvOS 26), MSE/MMS is gated behind WKFeature flags rather
+        // than the legacy _setMediaSourceEnabled: setter. Enable any feature whose key
+        // mentions MediaSource so sites that feed <video> via MSE can play.
+        BrowserEnableMediaFeatureFlags(preferences);
+    }
+
     BrowserSetBooleanSelectorIfAvailable(preferences, @"_setMediaCapabilityGrantsEnabled:", YES);
     BrowserSetBooleanSelectorIfAvailable(preferences, @"_setVideoQualityIncludesDisplayCompositingEnabled:", YES);
-
-    // On modern WebKit (tvOS 26), MSE/MMS is gated behind WKFeature flags rather
-    // than the legacy _setMediaSourceEnabled: setter. Enable any feature whose key
-    // mentions MediaSource so sites that feed <video> via MSE can play.
-    BrowserEnableMediaFeatureFlags(preferences);
 }
 
 static void BrowserEnableMatchingFeatures(id preferences, NSArray *features) {
@@ -411,6 +442,48 @@ static void BrowserEnableMediaFeatureFlags(id preferences) {
     SEL internalSelector = NSSelectorFromString(@"_internalDebugFeatures");
     if ([preferencesClass respondsToSelector:internalSelector]) {
         BrowserEnableMatchingFeatures(preferences, ((id (*)(id, SEL))objc_msgSend)((id)preferencesClass, internalSelector));
+    }
+}
+
+// Native Video Mode mirror of the enable path: pass NO (not YES) to
+// _setEnabled:forFeature: for features whose key mentions MediaSource
+// (case-insensitive; ManagedMediaSource keys contain it too). Features with
+// any other key are left untouched.
+static void BrowserDisableMatchingFeatures(id preferences, NSArray *features) {
+    if (![features isKindOfClass:[NSArray class]]) {
+        return;
+    }
+    SEL setEnabledForFeature = NSSelectorFromString(@"_setEnabled:forFeature:");
+    if (![preferences respondsToSelector:setEnabledForFeature]) {
+        return;
+    }
+    SEL keySelector = NSSelectorFromString(@"key");
+    for (id feature in features) {
+        if (![feature respondsToSelector:keySelector]) {
+            continue;
+        }
+        NSString *key = ((id (*)(id, SEL))objc_msgSend)(feature, keySelector);
+        if (![key isKindOfClass:[NSString class]]) {
+            continue;
+        }
+        if ([key.lowercaseString containsString:@"mediasource"]) {
+            ((void (*)(id, SEL, BOOL, id))objc_msgSend)(preferences, setEnabledForFeature, NO, feature);
+        }
+    }
+}
+
+static void BrowserDisableMatchingMediaFeatures(id preferences) {
+    Class preferencesClass = NSClassFromString(@"WKPreferences");
+    if (preferencesClass == Nil) {
+        return;
+    }
+    SEL experimentalSelector = NSSelectorFromString(@"_experimentalFeatures");
+    if ([preferencesClass respondsToSelector:experimentalSelector]) {
+        BrowserDisableMatchingFeatures(preferences, ((id (*)(id, SEL))objc_msgSend)((id)preferencesClass, experimentalSelector));
+    }
+    SEL internalSelector = NSSelectorFromString(@"_internalDebugFeatures");
+    if ([preferencesClass respondsToSelector:internalSelector]) {
+        BrowserDisableMatchingFeatures(preferences, ((id (*)(id, SEL))objc_msgSend)((id)preferencesClass, internalSelector));
     }
 }
 
@@ -564,6 +637,493 @@ static NSString *BrowserYouTubeRequestCaptureScript(void) {
     "})();";
 }
 
+// Streameast-family embeds load hls.js and only fall back to native
+// video.src = <m3u8> playback when Hls.isSupported() reports false. tvOS
+// WKWebView plays native HLS reliably but the MSE path hls.js drives is
+// crash-prone there, so when the frame has native HLS we shadow window.Hls
+// and make isSupported() return false to keep pages on the native branch.
+// The same hook records playlist URLs (fetch/XHR/video src) per frame so the
+// native player can take over even when the <video> src is a blob: URL, and
+// (probe section) posts per-frame media reports through the browserMediaProbe
+// message channel so the app can see inside cross-origin player iframes.
+// The hook sections are separately switchable for the remote bisect:
+// the config literal carries the negation of the (default-NO) ...FlagDisabled
+// NSUserDefaults keys, each section runs only when its flag is true, and the
+// whole script is bypassed when MediaEngineHooksDisabled is set.
+// forcePlayEnabled is the positive (default-NO) ForcePlayOnLaunch key: when
+// true the probe section also forces the largest visible video to start
+// playing once per document, for unattended headless regression runs.
+static NSString *BrowserMediaEngineUserScriptWithFlags(BOOL hlsEnabled, BOOL netEnabled, BOOL srcEnabled, BOOL probeEnabled, BOOL noMSEEnabled, BOOL forcePlayEnabled) {
+    NSString *config =
+        [NSString stringWithFormat:
+            @"window.__browserMediaEngineConfig = {hls:%@,net:%@,src:%@,probe:%@,noMSE:%@,forcePlay:%@};",
+            hlsEnabled ? @"true" : @"false",
+            netEnabled ? @"true" : @"false",
+            srcEnabled ? @"true" : @"false",
+            probeEnabled ? @"true" : @"false",
+            noMSEEnabled ? @"true" : @"false",
+            forcePlayEnabled ? @"true" : @"false"];
+    NSString *script =
+    @"(function(){"
+        "if (window.__browserMediaEngineHookInstalled) { return; }"
+        "window.__browserMediaEngineHookInstalled = true;"
+        "window.__browserCapturedMediaURLs = window.__browserCapturedMediaURLs || [];"
+        "window.__browserForceNativeHLS = false;"
+        "window.__browserMediaEngineConfig = window.__browserMediaEngineConfig || {hls:true,net:true,src:true,probe:true,noMSE:true,forcePlay:false};"
+        "try {"
+            // Native Video Mode belt-and-braces: hls.js isSupported() only
+            // checks window.MediaSource || window.ManagedMediaSource, so
+            // making both undefined is enough to keep pages on the native
+            // <video src=m3u8> branch even if the private WebKit flags do
+            // not exist on a future WebKit. The Hls interceptor below stays
+            // as the second layer.
+            "if (window.__browserMediaEngineConfig.noMSE) {"
+                "try { Object.defineProperty(window, 'MediaSource', {value: undefined, configurable: true}); } catch (error) {}"
+                "try { Object.defineProperty(window, 'ManagedMediaSource', {value: undefined, configurable: true}); } catch (error) {}"
+                "try { if (window.MediaSource && window.MediaSource.isTypeSupported) { /* dead */ } } catch (error) {}"
+            "}"
+        "} catch (error) {}"
+        "function rememberMediaURL(url) {"
+            "try {"
+                "var value = String(url || '');"
+                "if (!value) { return; }"
+                "var absolute = value;"
+                "try { absolute = String(new URL(value, document.baseURI).toString()); } catch (error) {}"
+                "var lowercase = absolute.toLowerCase();"
+                "if (lowercase.indexOf('blob:') === 0 || lowercase.indexOf('data:') === 0 || lowercase.indexOf('mediastream:') === 0) { return; }"
+                "if (lowercase.indexOf('http:') !== 0 && lowercase.indexOf('https:') !== 0) { return; }"
+                "if (!(/(\\.m3u8(\\?|$)|\\/playlist\\/)/).test(lowercase)) { return; }"
+                "var list = window.__browserCapturedMediaURLs;"
+                "if (!Array.isArray(list)) { list = []; window.__browserCapturedMediaURLs = list; }"
+                "var index = list.indexOf(absolute);"
+                "if (index !== -1) { list.splice(index, 1); }"
+                "list.push(absolute);"
+                "while (list.length > 12) { list.shift(); }"
+            "} catch (error) {}"
+        "}"
+        "try {"
+            "if (window.__browserMediaEngineConfig.hls) {"
+                "if (document.createElement('video').canPlayType('application/vnd.apple.mpegurl')) {"
+                    "window.__browserForceNativeHLS = true;"
+                    "var hlsValue;"
+                    "Object.defineProperty(window, 'Hls', {"
+                        "configurable: true,"
+                        "get: function() { return hlsValue; },"
+                        "set: function(value) {"
+                            "hlsValue = value;"
+                            "try {"
+                                "if (value && typeof value.isSupported === 'function') {"
+                                    // hls.js exposes isSupported as a static method; returning a
+                                    // false-function from the getter covers both Hls.isSupported()
+                                    // calls and bare existence checks, and keeps working when the
+                                    // build replaces the method with a static property.
+                                    "Object.defineProperty(value, 'isSupported', { get: function() { return function() { return false; }; }, configurable: true });"
+                                "}"
+                            "} catch (error) {}"
+                        "}"
+                    "});"
+                "}"
+            "}"
+        "} catch (error) {}"
+        "try {"
+            "if (window.__browserMediaEngineConfig.net) {"
+                "if (window.fetch) {"
+                    "var originalFetch = window.fetch;"
+                    "window.fetch = function(input, init) {"
+                        "try {"
+                            "if (typeof input === 'string') { rememberMediaURL(input); }"
+                            "else if (input && typeof input.url === 'string') { rememberMediaURL(input.url); }"
+                        "} catch (error) {}"
+                        "return originalFetch.apply(this, arguments);"
+                    "};"
+                "}"
+                "if (window.XMLHttpRequest && window.XMLHttpRequest.prototype) {"
+                    "var originalOpen = window.XMLHttpRequest.prototype.open;"
+                    "window.XMLHttpRequest.prototype.open = function(method, url) {"
+                        "try { rememberMediaURL(url); } catch (error) {}"
+                        "return originalOpen.apply(this, arguments);"
+                    "};"
+                "}"
+            "}"
+        "} catch (error) {}"
+        "try {"
+            "if (window.__browserMediaEngineConfig.src) {"
+                "document.addEventListener('loadstart', function(event) {"
+                    "try {"
+                        "var target = event && event.target;"
+                        "if (!target || String(target.tagName || '').toLowerCase() !== 'video') { return; }"
+                        "rememberMediaURL(String(target.currentSrc || target.src || ''));"
+                    "} catch (error) {}"
+                "}, true);"
+            "}"
+        "} catch (error) {}"
+        "try {"
+            "if (window.__browserMediaEngineConfig.probe && window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.browserMediaProbe) {"
+                "var probeLastPayload = '';"
+                "function clipProbeString(value) {"
+                    "var s = String(value || '');"
+                    "if (s.length > 500) { s = s.slice(0, 500); }"
+                    "return s;"
+                "}"
+                "function probeHttpURL(value) {"
+                    "try {"
+                        "var s = String(value || '');"
+                        "if (!s) { return ''; }"
+                        "var absolute = s;"
+                        "try { absolute = String(new URL(s, document.baseURI).toString()); } catch (error) {}"
+                        "var lowercase = absolute.toLowerCase();"
+                        "if (lowercase.indexOf('blob:') === 0 || lowercase.indexOf('data:') === 0 || lowercase.indexOf('mediastream:') === 0) { return ''; }"
+                        "if (lowercase.indexOf('http:') !== 0 && lowercase.indexOf('https:') !== 0) { return ''; }"
+                        "return clipProbeString(absolute);"
+                    "} catch (error) { return ''; }"
+                "}"
+                "function buildProbePayload() {"
+                    "var payload = {pageURL: clipProbeString(document.location.href), videos: [], captured: []};"
+                    "try {"
+                        "var nodes = document.querySelectorAll('video');"
+                        "for (var i = 0; i < nodes.length && payload.videos.length < 4; i += 1) {"
+                            "var v = nodes[i];"
+                            "payload.videos.push({"
+                                "src: probeHttpURL(v.src),"
+                                "currentSrc: probeHttpURL(v.currentSrc),"
+                                "paused: v.paused === true,"
+                                "duration: (typeof v.duration === 'number' && isFinite(v.duration)) ? v.duration : 0,"
+                                "title: clipProbeString(v.title),"
+                                "poster: probeHttpURL(v.poster)"
+                            "});"
+                        "}"
+                    "} catch (error) {}"
+                    "try {"
+                        "var probeList = window.__browserCapturedMediaURLs;"
+                        "if (Array.isArray(probeList)) {"
+                            "for (var j = probeList.length - 1; j >= 0 && payload.captured.length < 8; j -= 1) {"
+                                "var capturedURL = probeHttpURL(probeList[j]);"
+                                "if (capturedURL) { payload.captured.push(capturedURL); }"
+                            "}"
+                        "}"
+                    "} catch (error) {}"
+                    "return payload;"
+                "}"
+                "function postProbeReport(force) {"
+                    "try {"
+                        "var payload = buildProbePayload();"
+                        "if (payload.videos.length === 0 && payload.captured.length === 0) { return; }"
+                        "var json = JSON.stringify(payload);"
+                        "if (!force && json === probeLastPayload) { return; }"
+                        "probeLastPayload = json;"
+                        "window.webkit.messageHandlers.browserMediaProbe.postMessage(payload);"
+                    "} catch (error) {}"
+                "}"
+                "var probeEventNames = ['loadstart', 'play', 'loadedmetadata'];"
+                "for (var p = 0; p < probeEventNames.length; p += 1) {"
+                    "document.addEventListener(probeEventNames[p], function() { postProbeReport(true); }, true);"
+                "}"
+                "setInterval(function() { postProbeReport(false); }, 2000);"
+                // Headless forced play (ForcePlayOnLaunch, default OFF): one
+                // shot per document — pick the largest visible video that is
+                // ready or has a src, mute it so the autoplay policy accepts
+                // the play, start it, and log once. Runs on its own timer so
+                // the probe report shape and throttle above stay untouched.
+                "if (window.__browserMediaEngineConfig.forcePlay) {"
+                    "function tryForcedPlay() {"
+                        "try {"
+                            "if (window.__nebulaForcedPlay) { return; }"
+                            "var videos = document.querySelectorAll('video');"
+                            "var bestVideo = null;"
+                            "var bestArea = -1;"
+                            "for (var f = 0; f < videos.length; f += 1) {"
+                                "var candidate = videos[f];"
+                                "if (!(candidate.videoWidth >= 200)) { continue; }"
+                                "var candidateReady = false;"
+                                "try { candidateReady = candidate.readyState >= 2 || !!(candidate.currentSrc || candidate.src); } catch (error) { candidateReady = false; }"
+                                "if (!candidateReady) { continue; }"
+                                "var area = candidate.videoWidth * (candidate.videoHeight || 0);"
+                                "if (area > bestArea) { bestArea = area; bestVideo = candidate; }"
+                            "}"
+                            "if (bestVideo === null || bestVideo.paused !== true) { return; }"
+                            "window.__nebulaForcedPlay = true;"
+                            "bestVideo.muted = true;"
+                            "try {"
+                                "var playResult = bestVideo.play();"
+                                "if (playResult && typeof playResult.catch === 'function') { playResult.catch(function() {}); }"
+                                // Success: report immediately so a ForceNativePresentOnPlay
+                                // host sees the playing video without waiting a probe tick.
+                                "if (playResult && typeof playResult.then === 'function') { playResult.then(function() { try { postProbeReport(true); } catch (error) {} }); }"
+                            "} catch (error) {}"
+                            "console.log('[ForcePlay] forced play attempt');"
+                        "} catch (error) {}"
+                    "}"
+                    "setInterval(function() { tryForcedPlay(); }, 2000);"
+                "}"
+            "}"
+        "} catch (error) {}"
+    "})();";
+    return [config stringByAppendingString:script];
+}
+
+static NSString *BrowserMediaEngineUserScript(void) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    return BrowserMediaEngineUserScriptWithFlags(
+        ![defaults boolForKey:@"MediaEngineHlsFlagDisabled"],
+        ![defaults boolForKey:@"MediaEngineNetFlagDisabled"],
+        ![defaults boolForKey:@"MediaEngineSrcFlagDisabled"],
+        ![defaults boolForKey:@"MediaEngineProbeFlagDisabled"],
+        ![defaults boolForKey:@"NativeVideoModeDisabled"],
+        [defaults boolForKey:@"ForcePlayOnLaunch"]);
+}
+
+// All-frames anti-hijack script (popup blocker + ad-overlay defusing +
+// visibility spoof), installed alongside BrowserMediaEngineUserScript at the
+// same injection point. Sections are gated inside the page by the config
+// literal built from the (default-NO) PopupBlockerDisabled /
+// VisibilitySpoofDisabled NSUserDefaults keys.
+//
+// Popup policy (kept deliberately simple, ES5, nothing throws into page code):
+// a window.open is allowed when it happens within 800 ms of a real
+// pointerdown/click seen in THIS frame (captured-phase listeners maintain a
+// per-frame __lastUserGestureTs), when it targets a blob: URL, or when it
+// resolves to the same origin as the top document. Everything else — the
+// classic about:blank/javascript:/about:srcdoc ad-openers and every open
+// issued from a sub-frame (the streameast embeds live in iframes and pop from
+// there) — is blocked by returning null and reported through the
+// browserMediaProbe channel as {blocked:true, url}.
+// <a target=_blank> clicks from non-main frames go through the same policy
+// (preventDefault when the policy says block).
+//
+// Ad overlay hijack: instead of destructive global CSS, a 1500 ms sweep finds
+// fixed/absolute elements with z-index >= 999 covering >60% of the viewport
+// with no interactive descendants (the invisible "click anywhere -> popunder"
+// layer) and sets pointer-events:none on them. Elements processed per sweep
+// are capped and iframes are skipped.
+//
+// Visibility spoof (play-after-pause fix): hypothesis — the site's player
+// watches document.hidden/visibilitychange (and blur) and tears down its
+// buffer when the page "goes hidden"; on tvOS WKWebView our probe intervals /
+// alert presentations can flip that and the video never resumes. Fix: with
+// any <video> present and the per-page __browserFakeVisibility flag on
+// (default ON, gate VisibilitySpoofDisabled), report document.hidden as false
+// so the site never sees "hidden", and re-dispatch a synthetic cancelable
+// visibilitychange when the page becomes visible again so listeners that
+// re-attach their buffer run against the spoofed visible state.
+static NSString *BrowserPopupBlockerUserScriptWithFlags(BOOL popupEnabled, BOOL visibilityEnabled) {
+    NSString *config =
+        [NSString stringWithFormat:
+            @"window.__browserPopupBlockerConfig = {block:%@,vis:%@};",
+            popupEnabled ? @"true" : @"false",
+            visibilityEnabled ? @"true" : @"false"];
+    NSString *script =
+    @"(function(){"
+        "if (window.__browserPopupBlockerInstalled) { return; }"
+        "window.__browserPopupBlockerInstalled = true;"
+        "window.__browserPopupBlockerConfig = window.__browserPopupBlockerConfig || {block:true,vis:true};"
+        "window.__lastUserGestureTs = window.__lastUserGestureTs || 0;"
+        // Default ON: the spoof opts out via VisibilitySpoofDisabled, which
+        // arrives as vis:false in the config above.
+        "window.__browserFakeVisibility = window.__browserPopupBlockerConfig.vis ? true : false;"
+        "function popupNow() { try { return Date.now(); } catch (error) { return 0; } }"
+        "function popupBlockerHasProbe() {"
+            "try { return !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.browserMediaProbe); } catch (error) { return false; }"
+        "}"
+        "function popupClip(value) { var s = String(value == null ? '' : value); if (s.length > 500) { s = s.slice(0, 500); } return s; }"
+        "function postPopupBlock(url, overlay) {"
+            "try {"
+                "if (!popupBlockerHasProbe()) { return; }"
+                "var payload = {blocked: true, url: popupClip(url)};"
+                "if (overlay) { payload.overlay = true; }"
+                "window.webkit.messageHandlers.browserMediaProbe.postMessage(payload);"
+            "} catch (error) {}"
+        "}"
+        "function popupIsTopFrame() {"
+            "try { return window.top === window.self; } catch (error) { return false; }"
+        "}"
+        "function popupWithinGestureWindow() {"
+            "try { return (popupNow() - window.__lastUserGestureTs) <= 800; } catch (error) { return false; }"
+        "}"
+        "function popupSameOriginToTop(url) {"
+            "try {"
+                "var raw = String(url == null ? '' : url);"
+                "if (!raw) { return false; }"
+                "var topHref = '';"
+                "try { topHref = String(window.top.location.href || ''); } catch (error) { return false; }"
+                "if (!topHref) { return false; }"
+                "var topOrigin, candidate;"
+                "try {"
+                    "topOrigin = String(new URL(topHref).origin || '');"
+                    "candidate = String(new URL(raw, document.baseURI).origin || '');"
+                "} catch (error) { return false; }"
+                "return !!topOrigin && topOrigin === candidate;"
+            "} catch (error) { return false; }"
+        "}"
+        "function popupShouldBlock(url) {"
+            "try {"
+                // Never block: real user gesture in this frame, blob:, or
+                // same-origin to the top document.
+                "if (popupWithinGestureWindow()) { return false; }"
+                "var u = String(url == null ? '' : url).toLowerCase();"
+                "if (u.indexOf('blob:') === 0) { return false; }"
+                "if (popupSameOriginToTop(url)) { return false; }"
+                // Block heuristics: sub-frame opens, and blankish targets
+                // (about:blank / about:srcdoc / javascript: / empty) are the
+                // classic ad-popup shapes. A non-gesture http(s) popup from
+                // the top frame is blocked too (it failed the allow-list).
+                "return true;"
+            "} catch (error) { return false; }"
+        "}"
+        "try {"
+            "if (window.__browserPopupBlockerConfig.block) {"
+                // Per-frame user-gesture timestamps: capture-phase listeners
+                // so page stopPropagation() cannot hide a real click.
+                "var popupMarkGesture = function() { try { window.__lastUserGestureTs = popupNow(); } catch (error) {} };"
+                "window.addEventListener('pointerdown', popupMarkGesture, true);"
+                "window.addEventListener('click', popupMarkGesture, true);"
+            "}"
+        "} catch (error) {}"
+        "try {"
+            "if (window.__browserPopupBlockerConfig.block && window.open) {"
+                "var popupOriginalOpen = window.open;"
+                "window.open = function(url) {"
+                    "try {"
+                        "if (popupShouldBlock(url)) {"
+                            "postPopupBlock(url, false);"
+                            "return null;"
+                        "}"
+                    "} catch (error) {}"
+                    "return popupOriginalOpen.apply(this, arguments);"
+                "};"
+            "}"
+        "} catch (error) {}"
+        "try {"
+            "if (window.__browserPopupBlockerConfig.block) {"
+                // <a target=_blank> from non-main frames: route through the
+                // same policy; the main frame keeps default behavior.
+                "document.addEventListener('click', function(event) {"
+                    "try {"
+                        "if (popupIsTopFrame()) { return; }"
+                        "var node = event && event.target;"
+                        "var anchor = null;"
+                        "while (node && node !== document) {"
+                            "if (String(node.tagName || '').toUpperCase() === 'A') { anchor = node; break; }"
+                            "node = node.parentNode;"
+                        "}"
+                        "if (!anchor) { return; }"
+                        "if (!/blank/i.test(String(anchor.target || ''))) { return; }"
+                        "var href = String(anchor.href || anchor.getAttribute('href') || '');"
+                        "if (popupShouldBlock(href)) {"
+                            "event.preventDefault();"
+                            "postPopupBlock(href, false);"
+                        "}"
+                    "} catch (error) {}"
+                "}, true);"
+            "}"
+        "} catch (error) {}"
+        "try {"
+            "if (window.__browserPopupBlockerConfig.block) {"
+                // Overlay hijack sweep: one interval, capped work per pass.
+                "setInterval(function() {"
+                    "try {"
+                        "var vw = window.innerWidth || 0;"
+                        "var vh = window.innerHeight || 0;"
+                        "if (vw <= 0 || vh <= 0) { return; }"
+                        "var viewportArea = vw * vh;"
+                        "var candidates = document.querySelectorAll('div,ins,section,aside,span,canvas,embed');"
+                        "var processed = 0;"
+                        "for (var i = 0; i < candidates.length && processed < 200; i += 1) {"
+                            "var element = candidates[i];"
+                            "try {"
+                                "var tagName = String(element.tagName || '').toUpperCase();"
+                                "if (tagName === 'IFRAME') { continue; }"
+                                "if (element.__browserOverlayDefused) { continue; }"
+                                "var style = window.getComputedStyle(element);"
+                                "var position = String(style.position || '');"
+                                "if (position !== 'fixed' && position !== 'absolute') { continue; }"
+                                "var zIndex = parseInt(style.zIndex, 10);"
+                                "if (!isFinite(zIndex)) { zIndex = 0; }"
+                                "if (zIndex < 999) { continue; }"
+                                "var rect = element.getBoundingClientRect();"
+                                "var area = (rect.width > 0 ? rect.width : 0) * (rect.height > 0 ? rect.height : 0);"
+                                "if (area <= viewportArea * 0.6) { continue; }"
+                                "if (element.querySelector('a,button,input,select,textarea,video,iframe,canvas,[onclick]') !== null) { continue; }"
+                                "element.style.setProperty('pointer-events', 'none', 'important');"
+                                "element.__browserOverlayDefused = true;"
+                                "processed += 1;"
+                                "postPopupBlock('overlay:' + tagName + (element.id ? ('#' + element.id) : '') + ':z' + zIndex, true);"
+                            "} catch (error) {}"
+                        "}"
+                    "} catch (error) {}"
+                "}, 1500);"
+            "}"
+        "} catch (error) {}"
+        "try {"
+            "if (window.__browserPopupBlockerConfig.vis) {"
+                "var hiddenDescriptor = null;"
+                "try { hiddenDescriptor = Object.getOwnPropertyDescriptor(document, 'hidden'); } catch (error) {}"
+                "try { if (!hiddenDescriptor) { hiddenDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'hidden'); } } catch (error) {}"
+                // Hypothesis (see header comment): the player's visibilitychange
+                // handler destroys its buffer when the page reports hidden. Keep
+                // the REAL hidden value readable through the original getter
+                // only, and spoof false whenever a <video> exists.
+                "var realHiddenValue = function() {"
+                    "try {"
+                        "if (hiddenDescriptor && typeof hiddenDescriptor.get === 'function') { return hiddenDescriptor.get.call(document) === true; }"
+                    "} catch (error) {}"
+                    "return false;"
+                "};"
+                "if (hiddenDescriptor) {"
+                    "try {"
+                        "Object.defineProperty(document, 'hidden', {"
+                            "configurable: true,"
+                            "get: function() {"
+                                "try {"
+                                    "if (window.__browserFakeVisibility === true && document.getElementsByTagName('video').length > 0) { return false; }"
+                                "} catch (error) {}"
+                                "return realHiddenValue();"
+                            "}"
+                        "});"
+                    "} catch (error) {}"
+                    "var stateDescriptor = null;"
+                    "try { stateDescriptor = Object.getOwnPropertyDescriptor(document, 'visibilityState'); } catch (error) {}"
+                    "try { if (!stateDescriptor) { stateDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState'); } } catch (error) {}"
+                    "if (stateDescriptor) {"
+                        "try {"
+                            "Object.defineProperty(document, 'visibilityState', {"
+                                "configurable: true,"
+                                "get: function() {"
+                                    "try {"
+                                        "if (window.__browserFakeVisibility === true && document.getElementsByTagName('video').length > 0) { return 'visible'; }"
+                                    "} catch (error) {}"
+                                    "try { if (typeof stateDescriptor.get === 'function') { return stateDescriptor.get.call(document); } } catch (error) {}"
+                                    "return 'visible';"
+                                "}"
+                            "});"
+                        "} catch (error) {}"
+                    "}"
+                    // Becoming visible again: re-run the page's handlers with
+                    // the spoofed visible state (synthetic, cancelable, and
+                    // marked so our own listener does not loop).
+                    "document.addEventListener('visibilitychange', function(event) {"
+                        "try {"
+                            "if (event && event.__browserSyntheticVisibility) { return; }"
+                            "if (window.__browserFakeVisibility !== true) { return; }"
+                            "if (realHiddenValue()) { return; }"
+                            "var synthetic = new Event('visibilitychange', {bubbles: true, cancelable: true});"
+                            "synthetic.__browserSyntheticVisibility = true;"
+                            "document.dispatchEvent(synthetic);"
+                        "} catch (error) {}"
+                    "}, true);"
+                "}"
+            "}"
+        "} catch (error) {}"
+    "})();";
+    return [config stringByAppendingString:script];
+}
+
+static NSString *BrowserPopupBlockerUserScript(void) {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    return BrowserPopupBlockerUserScriptWithFlags(
+        ![defaults boolForKey:@"PopupBlockerDisabled"],
+        ![defaults boolForKey:@"VisibilitySpoofDisabled"]);
+}
+
 // tvOS WebKit routes <video> fullscreen to AVPlayerViewController's
 // enterFullScreenAnimated:, which the OS doesn't support — the transition fails
 // halfway and leaves the page (and the focus system) frozen. Replace the
@@ -600,7 +1160,16 @@ static NSString *BrowserFakeFullscreenScript(void) {
                     "window.webkit.messageHandlers.browserFullscreen.postMessage({"
                         "src: src,"
                         "time: time,"
-                        "title: document.title || ''"
+                        "title: document.title || '',"
+                        "capturedMedia: (function() {"
+                            "var list = window.__browserCapturedMediaURLs || [];"
+                            "var result = [];"
+                            "for (var i = list.length - 1; i >= 0 && result.length < 8; i -= 1) {"
+                                "result.push(String(list[i]));"
+                            "}"
+                            "return result;"
+                        "})(),"
+                        "pageURL: document.location.href || ''"
                     "});"
                     "sent = true;"
                 "}"
@@ -746,7 +1315,35 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
     }
 }
 
-@interface BrowserWebView ()
+@interface BrowserWebView () {
+    // Latest per-frame media probe reports: frame key (pageURL host+path) ->
+    // payload dictionary plus an _mediaProbeTimestamp NSDate. Written on the
+    // main thread only (script message handlers deliver there).
+    NSMutableDictionary<NSString *, NSDictionary *> *_mediaProbeByFrame;
+    // The reporting frame's WKScriptMessage.frameInfo (kept as id: this file
+    // talks to WebKit through the runtime only), keyed like _mediaProbeByFrame
+    // and replaced per report. Lets JS be evaluated directly in the
+    // cross-origin embed frames' documents. Main thread only.
+    NSMutableDictionary<NSString *, id> *_frameInfoByFrameKey;
+    // When each _frameInfoByFrameKey entry was stored (the frameInfo's own
+    // lifetime, parallel to it). Resume targeting prunes on THIS age, not on
+    // probe freshness: the embed's probe script stops reporting while the
+    // native player owns playback, yet its WKFrameInfo stays valid to target
+    // through the reload the embed performs at takeover/dismissal.
+    NSMutableDictionary<NSString *, NSDate *> *_frameInfoStoredTimeByFrameKey;
+    // {url, timestamp} entries reported by the popup blocker script, capped;
+    // newest-last. Main thread only.
+    NSMutableArray<NSDictionary *> *_blockedPopups;
+    // Per-frame "a video is currently playing" (any video with paused=false),
+    // used to catch the paused:true -> false transition for the auto-fullscreen
+    // prompt. Main thread only.
+    NSMutableDictionary<NSString *, NSNumber *> *_probePlayingByFrame;
+    // Auto-fullscreen prompt is offered at most once per page load; reset with
+    // the probe state on provisional navigation.
+    BOOL _embedPlaybackPromptOffered;
+    // ForceNativePresentOnPlay: the auto-present has fired for this document.
+    BOOL _forceNativePresentFired;
+}
 
 @property (nullable, nonatomic, strong) id runtimeWebView;
 @property (nullable, nonatomic, strong) NSURLRequest *lastRequest;
@@ -754,6 +1351,7 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
 @property (nonatomic, copy) NSString *userAgent;
 @property (nonatomic) BOOL loading;
 @property (nullable, nonatomic, strong) BrowserWeakScriptMessageForwarder *fullscreenMessageForwarder;
+@property (nullable, nonatomic, strong) BrowserWeakScriptMessageForwarder *mediaProbeMessageForwarder;
 
 @end
 
@@ -804,10 +1402,29 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
     if (configuration != nil && [configuration respondsToSelector:mediaTypesSelector]) {
         ((void (*)(id, SEL, NSUInteger))objc_msgSend)(configuration, mediaTypesSelector, 0); // WKAudiovisualMediaTypeNone
     }
+    // Autoplay launch flag (-WebViewAutoPlayAll YES, default NO): explicitly
+    // removes the user-gesture requirement for embedded players so unattended
+    // regression runs autoplay right after page load. NOTE: the synthetic
+    // click fix above already assigns WKAudiovisualMediaTypeNone for every
+    // web view today, so the OFF path is byte-identical to before and the ON
+    // path re-applies the same value; the flag only becomes a behavioral gate
+    // if the unconditional default assignment above is ever narrowed.
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"WebViewAutoPlayAll"]) {
+        if (configuration != nil && [configuration respondsToSelector:mediaTypesSelector]) {
+            ((void (*)(id, SEL, NSUInteger))objc_msgSend)(configuration, mediaTypesSelector, 0); // WKAudiovisualMediaTypeNone
+        }
+    }
     BrowserConfigurePrivateMediaPreferences(configuration);
     BrowserInstallYouTubeCaptureUserScript(configuration);
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"MediaEngineHooksDisabled"]) {
+        BrowserInstallUserScriptSource(configuration, BrowserMediaEngineUserScript());
+    }
+    // Popup blocker + visibility spoof: same injection point, own gates
+    // (PopupBlockerDisabled / VisibilitySpoofDisabled) evaluated per webview.
+    BrowserInstallUserScriptSource(configuration, BrowserPopupBlockerUserScript());
     BrowserInstallUserScriptSource(configuration, BrowserFakeFullscreenScript());
     [self installFullscreenScriptMessageHandlerOnConfiguration:configuration];
+    [self installMediaProbeScriptMessageHandlerOnConfiguration:configuration];
 
     id webViewObject = ((id (*)(id, SEL))objc_msgSend)((id)webViewClass, @selector(alloc));
     SEL initializer = NSSelectorFromString(@"initWithFrame:configuration:");
@@ -947,7 +1564,12 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
         finished = YES;
         CFRunLoopStop(runLoop); // wake the pump immediately
     });
-    BrowserPumpRunLoopUntil(&finished, runLoop);
+    BOOL pumped = BrowserPumpRunLoopUntil(&finished, runLoop);
+    if (!pumped && !finished) {
+        NSString *truncatedScript = script.length > 60 ? [script substringToIndex:60] : script;
+        NSLog(@"[SyncEval] nested-pump rejected script=%@", truncatedScript);
+        return nil;
+    }
 
     if (evaluationError != nil) {
         return nil;
@@ -958,14 +1580,30 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
 // Fire-and-forget: evaluate JS without blocking the caller. Use when the result
 // is not needed (applying styles, dispatching synthetic events, installing hooks).
 - (void)evaluateJavaScriptStringAsync:(NSString *)script {
+    [self evaluateJavaScriptStringAsync:script completion:nil];
+}
+
+- (void)evaluateJavaScriptStringAsync:(NSString *)script completion:(void (^)(id _Nullable result))completion {
     if (script.length == 0 || self.runtimeWebView == nil) {
+        if (completion != nil) {
+            completion(nil);
+        }
         return;
     }
     SEL selector = NSSelectorFromString(@"evaluateJavaScript:completionHandler:");
     if (![self.runtimeWebView respondsToSelector:selector]) {
+        if (completion != nil) {
+            completion(nil);
+        }
         return;
     }
-    ((void (*)(id, SEL, id, id))objc_msgSend)(self.runtimeWebView, selector, script, (id)nil);
+    // completionHandler:(void (^)(id, NSError *)) — bridged through objc_msgSend
+    // like every other runtime-WebView call in this file.
+    id completionHandler = nil;
+    if (completion != nil) {
+        completionHandler = ^(id result, __unused NSError *error) { completion(result); };
+    }
+    ((void (*)(id, SEL, id, id))objc_msgSend)(self.runtimeWebView, selector, script, completionHandler);
 }
 
 - (void)pauseAllMediaPlayback {
@@ -1179,6 +1817,24 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
 
 - (void)webView:(id)webView didStartProvisionalNavigation:(id)navigation {
     self.loading = YES;
+    // A new main-frame page: reports from the previous page's frames are stale.
+    // This callback also fires for iframe provisional navigations (a cross-origin
+    // embed reloading its own document); wiping the registry then destroys the
+    // embed WKFrameInfo the resume path needs. Gate the reset on main-frame.
+    BOOL isMainFrame = YES; // unknown navigation/targetFrame: fall back to resetting
+    @try {
+        id targetFrame = [navigation valueForKey:@"targetFrame"];
+        NSNumber *mainFrame = [targetFrame valueForKey:@"isMainFrame"];
+        if (mainFrame) {
+            isMainFrame = [mainFrame boolValue];
+        }
+    } @catch (NSException *exception) {
+        isMainFrame = YES;
+    }
+    if (isMainFrame) {
+        [self resetMediaProbeReports];
+        NSLog(@"[NativeVideoPlayer] main-frame navigation: probe reports reset");
+    }
     if ([self.delegate respondsToSelector:@selector(webViewDidStartLoad:)]) {
         [self.delegate webViewDidStartLoad:self];
     }
@@ -1211,6 +1867,17 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
 
 - (void)webViewWebContentProcessDidTerminate:(id)webView {
     self.loading = NO;
+    // DIAGNOSTIC(webshim): evidence for the google.com page-death repro — footprint at death + which page.
+    struct task_vm_info vmInfo;
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    NSString *footprintDescription = @"unknown";
+    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vmInfo, &count) == KERN_SUCCESS) {
+        footprintDescription = [NSString stringWithFormat:@"%.0fMB", (double)vmInfo.phys_footprint / (1024.0 * 1024.0)];
+    }
+    NSLog(@"[WebProcessDied] url=%@ appFootprint=%@ lastTitle=%@",
+          self.request.URL.absoluteString ?: @"",
+          footprintDescription,
+          self.lastTitle ?: @"");
 }
 
 - (NSURLRequest *)requestFromNavigationAction:(id)navigationAction {
@@ -1281,6 +1948,284 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
     ((void (*)(id, SEL, id, id))objc_msgSend)(userContentController, addHandlerSelector, forwarder, kBrowserFullscreenMessageHandlerName);
 }
 
+#pragma mark - Media probe script message bridge
+
+// Mirror of the fullscreen handler install: second weak forwarder so the
+// configuration can hold a browserMediaProbe handler without a retain cycle.
+- (void)installMediaProbeScriptMessageHandlerOnConfiguration:(id)configuration {
+    SEL userContentControllerGetter = NSSelectorFromString(@"userContentController");
+    if (configuration == nil || ![configuration respondsToSelector:userContentControllerGetter]) {
+        return;
+    }
+    id userContentController = ((id (*)(id, SEL))objc_msgSend)(configuration, userContentControllerGetter);
+    SEL addHandlerSelector = NSSelectorFromString(@"addScriptMessageHandler:name:");
+    if (userContentController == nil || ![userContentController respondsToSelector:addHandlerSelector]) {
+        return;
+    }
+    BrowserWeakScriptMessageForwarder *forwarder = [BrowserWeakScriptMessageForwarder new];
+    forwarder.target = self;
+    self.mediaProbeMessageForwarder = forwarder;
+    ((void (*)(id, SEL, id, id))objc_msgSend)(userContentController, addHandlerSelector, forwarder, kBrowserMediaProbeMessageHandlerName);
+}
+
+// Script messages arrive on the main thread. Malformed payloads (non-dict,
+// missing/unparseable pageURL) are ignored. frameInfo is the reporting
+// WKScriptMessage.frameInfo (nil when unavailable); it is retained next to
+// the probe so JS can later target this exact frame document.
+- (void)storeMediaProbeMessageBody:(id)body frameInfo:(nullable id)frameInfo {
+    if (![body isKindOfClass:[NSDictionary class]]) {
+        return;
+    }
+    // Popup-blocker reports ({blocked:true, url}) carry no pageURL: append
+    // them to the capped blockedPopups list instead of the per-frame store.
+    if ([body[@"blocked"] boolValue]) {
+        if (_blockedPopups == nil) {
+            _blockedPopups = [NSMutableArray array];
+        }
+        NSString *blockedURL = [body[@"url"] isKindOfClass:[NSString class]] ? body[@"url"] : @"";
+        NSMutableDictionary *entry = [NSMutableDictionary dictionary];
+        entry[@"url"] = blockedURL;
+        entry[@"timestamp"] = [NSDate date];
+        if ([body[@"overlay"] boolValue]) {
+            entry[@"overlay"] = @YES;
+        }
+        [_blockedPopups addObject:entry];
+        while (_blockedPopups.count > 25) {
+            [_blockedPopups removeObjectAtIndex:0];
+        }
+        NSLog(@"[PopupBlocker] blocked=%@ url=%@", [body[@"overlay"] boolValue] ? @"overlay" : @"window", blockedURL);
+        return;
+    }
+    NSString *pageURLString = [body[@"pageURL"] isKindOfClass:[NSString class]] ? body[@"pageURL"] : nil;
+    if (pageURLString.length == 0) {
+        return;
+    }
+    NSURL *pageURL = [NSURL URLWithString:pageURLString];
+    NSString *frameKey = pageURL.host.length > 0
+        ? [pageURL.host stringByAppendingString:pageURL.path ?: @""]
+        : pageURLString;
+
+    if (_mediaProbeByFrame == nil) {
+        _mediaProbeByFrame = [NSMutableDictionary dictionary];
+    }
+    NSMutableDictionary *entry = [body mutableCopy];
+    entry[kBrowserMediaProbeTimestampKey] = [NSDate date];
+    _mediaProbeByFrame[frameKey] = entry;
+    if (frameInfo != nil) {
+        if (_frameInfoByFrameKey == nil) {
+            _frameInfoByFrameKey = [NSMutableDictionary dictionary];
+        }
+        _frameInfoByFrameKey[frameKey] = frameInfo;
+        if (_frameInfoStoredTimeByFrameKey == nil) {
+            _frameInfoStoredTimeByFrameKey = [NSMutableDictionary dictionary];
+        }
+        _frameInfoStoredTimeByFrameKey[frameKey] = [NSDate date];
+    }
+    static NSInteger probeStoreLogCount = 0;
+    if (probeStoreLogCount < 5) {
+        probeStoreLogCount++;
+        NSLog(@"[NativeVideoPlayer] probe store frameKey=%@ frameInfo=%@ self=%p", frameKey, frameInfo ? NSStringFromClass([frameInfo class]) : @"NIL", self);
+    }
+
+    [self detectPlayingEmbedVideoInReport:body pageURL:pageURL frameKey:frameKey];
+    [self detectForcedNativePresentationInReport:body];
+}
+
+// Streameast-family player iframes live on a different origin than the page
+// (and their URLs contain a new-stream-embed path segment). When such a frame
+// transitions a video from paused to playing, ask the host to take over with
+// the native player — the in-page fullscreen paths are broken on tvOS.
+// At most once per page load. In Native Video Mode the host presents the
+// player automatically unless NativeAutoFullscreenDisabled is set; on the
+// legacy (mode-off) path the host shows its confirmation prompt, suppressed
+// by NativeAutoFullscreenPromptDisabled.
+- (void)detectPlayingEmbedVideoInReport:(NSDictionary *)report pageURL:(NSURL *)pageURL frameKey:(NSString *)frameKey {
+    if (_embedPlaybackPromptOffered) {
+        return;
+    }
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    BOOL autoFullscreenEnabled = ![defaults boolForKey:@"NativeVideoModeDisabled"] &&
+                                 ![defaults boolForKey:@"NativeAutoFullscreenDisabled"];
+    if (!autoFullscreenEnabled && [defaults boolForKey:@"NativeAutoFullscreenPromptDisabled"]) {
+        return;
+    }
+    if ([self.delegate respondsToSelector:@selector(webView:didDetectPlayingEmbedVideoReport:)] == NO) {
+        return;
+    }
+
+    // Any video reported as playing (paused == false)?
+    NSArray *videos = [report[@"videos"] isKindOfClass:[NSArray class]] ? report[@"videos"] : @[];
+    BOOL anyPlaying = NO;
+    for (id videoObject in videos) {
+        if (![videoObject isKindOfClass:[NSDictionary class]]) {
+            continue;
+        }
+        id pausedValue = ((NSDictionary *)videoObject)[@"paused"];
+        if ([pausedValue isKindOfClass:[NSNumber class]] && [(NSNumber *)pausedValue boolValue] == NO) {
+            anyPlaying = YES;
+            break;
+        }
+    }
+
+    if (_probePlayingByFrame == nil) {
+        _probePlayingByFrame = [NSMutableDictionary dictionary];
+    }
+    NSNumber *previousPlaying = _probePlayingByFrame[frameKey];
+    _probePlayingByFrame[frameKey] = @(anyPlaying);
+    // Require a known previous state that was paused so the first report of an
+    // already-playing embed (page-load resume) is not mistaken for the press.
+    if (previousPlaying == nil || [previousPlaying boolValue] == YES || anyPlaying == NO) {
+        return;
+    }
+
+    // Embed-like frame: the new-stream-embed marker, or a pageURL origin
+    // different from the main frame (third-party player iframes).
+    NSString *lowercasePath = pageURL.path.lowercaseString ?: @"";
+    NSString *lowercaseHost = pageURL.host.lowercaseString ?: @"";
+    BOOL embedLike = [lowercasePath containsString:@"new-stream-embed"] || [lowercaseHost containsString:@"new-stream-embed"];
+    if (!embedLike) {
+        NSString *mainFrameHost = self.currentURL.host.lowercaseString ?: @"";
+        embedLike = mainFrameHost.length > 0 && ![lowercaseHost isEqualToString:mainFrameHost];
+    }
+    if (!embedLike) {
+        return;
+    }
+
+    _embedPlaybackPromptOffered = YES;
+    NSLog(@"[NativeVideoPlayer] embed video playing in frame=%@ — offering fullscreen", frameKey);
+    [self.delegate webView:self didDetectPlayingEmbedVideoReport:report];
+}
+
+// ForceNativePresentOnPlay (default-NO launch flag): once per document, the
+// first probe report whose frame has a playing video (paused == false) asks
+// the host to present the native player automatically. Covers the
+// ForcePlayOnLaunch headless play: its forced play() shows up here as the
+// video turning playing, so no separate JS signal is needed.
+- (void)detectForcedNativePresentationInReport:(NSDictionary *)report {
+    if (_forceNativePresentFired) {
+        return;
+    }
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"ForceNativePresentOnPlay"]) {
+        return;
+    }
+    if ([self.delegate respondsToSelector:@selector(webViewWantsForcedNativePresentation:)] == NO) {
+        return;
+    }
+    NSArray *videos = [report[@"videos"] isKindOfClass:[NSArray class]] ? report[@"videos"] : @[];
+    for (id videoObject in videos) {
+        if (![videoObject isKindOfClass:[NSDictionary class]]) {
+            continue;
+        }
+        id pausedValue = ((NSDictionary *)videoObject)[@"paused"];
+        if ([pausedValue isKindOfClass:[NSNumber class]] && [(NSNumber *)pausedValue boolValue] == NO) {
+            _forceNativePresentFired = YES;
+            NSLog(@"[NativeVideoPlayer] force-native-present fired");
+            [self.delegate webViewWantsForcedNativePresentation:self];
+            return;
+        }
+    }
+}
+
+- (NSArray<NSDictionary *> *)freshMediaProbeReportsYoungerThan:(NSTimeInterval)age {
+    if (_mediaProbeByFrame.count == 0) {
+        return @[];
+    }
+    NSMutableArray<NSDictionary *> *entries = [NSMutableArray array];
+    NSMutableArray<NSString *> *staleKeys = [NSMutableArray array];
+    [_mediaProbeByFrame enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSDictionary *entry, __unused BOOL *stop) {
+        NSDate *timestamp = [entry[kBrowserMediaProbeTimestampKey] isKindOfClass:[NSDate class]] ? entry[kBrowserMediaProbeTimestampKey] : nil;
+        NSTimeInterval ageOfEntry = timestamp != nil ? -[timestamp timeIntervalSinceNow] : DBL_MAX;
+        if (ageOfEntry > 30.0) {
+            [staleKeys addObject:key];
+            return;
+        }
+        if (timestamp == nil || ageOfEntry > age) {
+            return;
+        }
+        [entries addObject:[entry copy]];
+    }];
+    [_mediaProbeByFrame removeObjectsForKeys:staleKeys];
+
+    [entries sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        return [b[kBrowserMediaProbeTimestampKey] compare:a[kBrowserMediaProbeTimestampKey]]; // newest first
+    }];
+
+    // The reports are returned WITH kBrowserMediaProbeTimestampKey retained:
+    // the presentation side (BrowserVideoPlaybackCoordinator) logs the age of
+    // a report that succeeds past the auto path's freshness window (the
+    // manual-takeover-from-aged-probe line), which needs the receive stamp.
+    NSMutableArray<NSDictionary *> *reports = [NSMutableArray arrayWithCapacity:entries.count];
+    for (NSDictionary *entry in entries) {
+        [reports addObject:[entry copy]];
+    }
+    return reports;
+}
+
+// Evaluate the script directly in every frame document that reported a media
+// probe, including the cross-origin embed iframes top-document JS cannot
+// reach, through the public WKWebView (iOS/tvOS 14+)
+// -evaluateJavaScript:inFrame:inContentWorld:completionHandler: API, passing
+// the page content world. Entries whose frameInfo was STORED more than 600s
+// ago are pruned before dispatch: the resume runs well after dismissal while
+// the embed's probe script is silent (the native player owns playback), and a
+// WKFrameInfo remains valid to target through the document reload the embed
+// performs, so presentation-candidate probe staleness must not gate this.
+// Evaluations on since-dead frames no-op harmlessly with a nil completion.
+// Returns the number of frames targeted. Main thread only.
+- (NSUInteger)evaluateJavaScriptOnRecentProbeFrames:(NSString *)javaScript {
+    NSLog(@"[NativeVideoPlayer] frame-eval entry js=%lu frames=%lu runtime=%@ webviewSelf=%p", (unsigned long)javaScript.length, (unsigned long)_frameInfoByFrameKey.count, self.runtimeWebView == nil ? @"NIL" : @"set", self);
+    if (javaScript.length == 0 || self.runtimeWebView == nil || _frameInfoByFrameKey.count == 0) {
+        return 0;
+    }
+    SEL selector = NSSelectorFromString(@"evaluateJavaScript:inFrame:inContentWorld:completionHandler:");
+    // WKContentWorld is not directly referenceable under this target's
+    // availability guards, so resolve +[WKContentWorld pageWorld] at runtime.
+    id pageWorld = nil;
+    Class contentWorldClass = NSClassFromString(@"WKContentWorld");
+    SEL pageWorldSelector = NSSelectorFromString(@"pageWorld");
+    if (contentWorldClass != nil && [contentWorldClass respondsToSelector:pageWorldSelector]) {
+        pageWorld = ((id (*)(id, SEL))objc_msgSend)((id)contentWorldClass, pageWorldSelector);
+    }
+    if (![self.runtimeWebView respondsToSelector:selector] || pageWorld == nil) {
+        static BOOL loggedMissingFrameEvalSelector = NO;
+        if (!loggedMissingFrameEvalSelector) {
+            loggedMissingFrameEvalSelector = YES;
+            NSLog(@"[NativeVideoPlayer] frame-eval selector unavailable");
+        }
+        return 0;
+    }
+    NSMutableArray<NSString *> *staleKeys = [NSMutableArray array];
+    [_frameInfoByFrameKey enumerateKeysAndObjectsUsingBlock:^(NSString *key, __unused id frameInfo, __unused BOOL *stop) {
+        NSDate *stored = [_frameInfoStoredTimeByFrameKey[key] isKindOfClass:[NSDate class]] ? _frameInfoStoredTimeByFrameKey[key] : nil;
+        NSTimeInterval ageOfEntry = stored != nil ? -[stored timeIntervalSinceNow] : DBL_MAX;
+        if (ageOfEntry > 600.0) {
+            [staleKeys addObject:key];
+        }
+    }];
+    [_frameInfoByFrameKey removeObjectsForKeys:staleKeys];
+    [_frameInfoStoredTimeByFrameKey removeObjectsForKeys:staleKeys];
+
+    NSUInteger dispatchedFrames = 0;
+    for (id frameInfo in [_frameInfoByFrameKey allValues]) {
+        ((void (*)(id, SEL, id, id, id, id))objc_msgSend)(self.runtimeWebView, selector, javaScript, frameInfo, pageWorld, nil);
+        dispatchedFrames++;
+    }
+    return dispatchedFrames;
+}
+
+- (void)resetMediaProbeReports {
+    [_mediaProbeByFrame removeAllObjects];
+    [_frameInfoByFrameKey removeAllObjects];
+    [_frameInfoStoredTimeByFrameKey removeAllObjects];
+    [_probePlayingByFrame removeAllObjects];
+    _embedPlaybackPromptOffered = NO;
+    _forceNativePresentFired = NO;
+}
+
+- (NSArray<NSDictionary *> *)blockedPopups {
+    return [_blockedPopups copy] ?: @[];
+}
+
 - (void)userContentController:(id)userContentController didReceiveScriptMessage:(id)message {
     (void)userContentController;
     SEL nameSelector = NSSelectorFromString(@"name");
@@ -1289,6 +2234,14 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
         return;
     }
     NSString *name = ((id (*)(id, SEL))objc_msgSend)(message, nameSelector);
+    if ([name isEqualToString:kBrowserMediaProbeMessageHandlerName]) {
+        SEL frameInfoSelector = NSSelectorFromString(@"frameInfo");
+        id frameInfo = [message respondsToSelector:frameInfoSelector]
+            ? ((id (*)(id, SEL))objc_msgSend)(message, frameInfoSelector)
+            : nil;
+        [self storeMediaProbeMessageBody:((id (*)(id, SEL))objc_msgSend)(message, bodySelector) frameInfo:frameInfo];
+        return;
+    }
     if (![name isEqualToString:kBrowserFullscreenMessageHandlerName]) {
         return;
     }
@@ -1418,6 +2371,39 @@ windowFeatures:(id)windowFeatures {
     NSURLRequest *request = [self requestFromNavigationAction:navigationAction];
     NSInteger navigationType = [self navigationTypeFromNavigationAction:navigationAction];
 
+    // Frame-initiated popups (streameast-style click-hijack: an iframe
+    // overlays a transparent layer on the play button and turns clicks into
+    // window.open/target=_blank from itself) are denied silently: no new
+    // webview, no alert. Only an explicit non-main-frame source counts; a
+    // missing or unreadable sourceFrame keeps the legacy main-frame flow.
+    SEL sourceFrameSelector = NSSelectorFromString(@"sourceFrame");
+    if ([navigationAction respondsToSelector:sourceFrameSelector]) {
+        id sourceFrame = ((id (*)(id, SEL))objc_msgSend)(navigationAction, sourceFrameSelector);
+        SEL isMainFrameSelector = NSSelectorFromString(@"isMainFrame");
+        if (sourceFrame != nil && [sourceFrame respondsToSelector:isMainFrameSelector] &&
+            !((BOOL (*)(id, SEL))objc_msgSend)(sourceFrame, isMainFrameSelector)) {
+            NSString *sourceHost = @"";
+            SEL frameRequestSelector = NSSelectorFromString(@"request");
+            if ([sourceFrame respondsToSelector:frameRequestSelector]) {
+                NSURLRequest *frameRequest = ((id (*)(id, SEL))objc_msgSend)(sourceFrame, frameRequestSelector);
+                sourceHost = frameRequest.URL.host ?: @"";
+            }
+            NSLog(@"popup blocked (frame-initiated) url=%@ from=%@",
+                  request.URL.absoluteString ?: @"",
+                  sourceHost);
+            return nil;
+        }
+    }
+
+    // Confirmation gate: the host shows the prompt and opens the tab itself
+    // from the alert (async), so we never honor the request here. One alert
+    // per navigationAction; requests that are nil can't be confirmed.
+    if (request != nil &&
+        [self.delegate respondsToSelector:@selector(webView:wantsConfirmationForNewTabRequest:navigationType:)] &&
+        [self.delegate webView:self wantsConfirmationForNewTabRequest:request navigationType:navigationType]) {
+        return nil;
+    }
+
     BOOL delegateHandlesNewTabRequests = [self.delegate respondsToSelector:@selector(webView:shouldCreateNewTabWithRequest:navigationType:)];
     BOOL handledInTab = NO;
     if (delegateHandlesNewTabRequests) {
@@ -1471,7 +2457,10 @@ windowFeatures:(id)windowFeatures {
         finished = YES;
         CFRunLoopStop(runLoop);
     });
-    BrowserPumpRunLoopUntil(&finished, runLoop);
+    BOOL pumped = BrowserPumpRunLoopUntil(&finished, runLoop);
+    if (!pumped && !finished) {
+        return NSHTTPCookieStorage.sharedHTTPCookieStorage.cookies ?: @[];
+    }
     return cookies ?: @[];
 }
 
@@ -1515,7 +2504,9 @@ windowFeatures:(id)windowFeatures {
             }
         });
     }
-    BrowserPumpRunLoopUntil(&finished, runLoop);
+    // Nested rejection behaves like the timeout path: proceed, handlers land
+    // inside the outer pump.
+    (void)BrowserPumpRunLoopUntil(&finished, runLoop);
 }
 
 + (NSSet<NSString *> *)allWebsiteDataTypes {

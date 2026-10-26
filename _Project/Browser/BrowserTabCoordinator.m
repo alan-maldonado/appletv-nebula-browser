@@ -24,6 +24,7 @@ static CGFloat const kThumbnailStagingOffset = 4096.0;
 @property (nonatomic, weak) UIPanGestureRecognizer *manualScrollPanRecognizer;
 @property (nonatomic, weak) id webViewDelegate;
 @property (nonatomic) BOOL scrollViewAllowBounces;
+@property (nonatomic, assign) BOOL didAttemptRelaunchOnLaunch;
 @property (nonatomic) NSMutableDictionary<NSString *, BrowserWebView *> *webViewsByTabIdentifier;
 @property (nonatomic) UIView *thumbnailStagingView;
 @property (nonatomic, readwrite, nullable) BrowserWebView *activeWebView;
@@ -258,6 +259,13 @@ static CGFloat const kThumbnailStagingOffset = 4096.0;
 }
 
 - (void)webViewDidAppear {
+    // The saved reopen request is a relaunch-once request: consuming it must not
+    // re-navigate the web view on every re-appearance (e.g. when the native video
+    // player is dismissed), only on the first appearance after launch.
+    if (self.didAttemptRelaunchOnLaunch) {
+        return;
+    }
+    self.didAttemptRelaunchOnLaunch = YES;
     NSURLRequest *savedReopenRequest = [self.sessionStore consumeSavedURLToReopenRequestWithNavigationService:self.navigationService];
     if (savedReopenRequest != nil) {
         [self.activeWebView loadRequest:savedReopenRequest];

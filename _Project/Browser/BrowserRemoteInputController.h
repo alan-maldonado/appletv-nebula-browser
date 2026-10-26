@@ -26,6 +26,13 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)browserRemoteInputControllerOpenNewTab;
 - (void)browserRemoteInputControllerHandleMenuPress;
 - (void)browserRemoteInputControllerHandlePlayPausePress;
+// Single Play/Pause press: toggle the page's largest visible <video> both ways
+// (top document + same-origin iframes). YES = a video was found and toggled,
+// NO = the host runs the legacy press behavior (search box / alert dismiss).
+- (BOOL)browserRemoteInputControllerHandlePlayPauseToggleInPageVideo;
+// Long-press (hold) on Play/Pause: open the best video the page's frames
+// reported natively. Hosts that don't implement it ignore the hold.
+- (void)browserRemoteInputControllerHandlePlayPauseHold;
 - (void)browserRemoteInputControllerHandleAdvancedMenuPress;
 - (NSString *)browserRemoteInputControllerHoverStateAtCursorPoint:(CGPoint)point;
 - (void)browserRemoteInputControllerSetWebInteractionEnabled:(BOOL)enabled;

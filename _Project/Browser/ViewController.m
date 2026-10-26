@@ -9,6 +9,7 @@
 #import "BrowserMenuCoordinator.h"
 #import "BrowserDOMInteractionService.h"
 #import "BrowserNavigationService.h"
+#import "BrowserNativeVideoPlayerViewController.h"
 #import "BrowserPageActionCoordinator.h"
 #import "BrowserPreferencesStore.h"
 #import "BrowserRemoteInputController.h"
@@ -21,6 +22,21 @@
 #import "ViewController.h"
 
 static NSString * const kBrowserGlobalSelectPressEndedNotification = @"BrowserGlobalSelectPressEndedNotification";
+
+// ForceNativePresentOnPlay: a launch modal routinely covers the page when the
+// web view reports a playing video, so the presentation is retried on a timer
+// until it lands or the attempt cap is reached.
+static const NSTimeInterval kForceNativePresentRetryInterval = 1.5;
+static const NSUInteger kForceNativePresentMaxRetries = 8;
+
+// Auto-fullscreen suppression window after a native-player dismissal (or a
+// "Keep playing here" choice): the embed watchdog reloads the player iframe
+// the moment we leave, its video replays, and the probes report again within
+// seconds; without a window the dismissed player re-presents forever.
+static const NSTimeInterval kNativePlayerDismissSuppressionInterval = 180.0;
+// The suppression is checked on every probe report; keep the log to once
+// per window instead of spamming each probe.
+static const NSTimeInterval kNativePlayerDismissSuppressionLogInterval = 10.0;
 
 static UIColor *kTextColor(void) {
     if (@available(tvOS 13, *)) {
@@ -300,6 +316,15 @@ static UIColor *kTextColor(void) {
 @property (nonatomic) BOOL displayedHintsOnLaunch;
 @property (nonatomic) BOOL scrollViewAllowBounces;
 @property (nonatomic, getter=isTopBarFocusActive) BOOL topBarFocusActive;
+// ForceNativePresentOnPlay: deferred retry state while a launch modal is up.
+@property (nonatomic) BOOL forceNativePresentRetryPending;
+@property (nonatomic) NSUInteger forceNativePresentRetryAttempt;
+// CFAbsoluteTimeGetCurrent of the latest native-player dismissal / "Keep
+// playing here" choice; opens the auto-fullscreen suppression window.
+@property (nonatomic) NSTimeInterval lastNativePlayerDismissUptime;
+// Rate limiter for the "suppressed after dismissal" log (probe reports
+// arrive every couple of seconds inside the window).
+@property (nonatomic) NSTimeInterval lastDismissSuppressionLogUptime;
 // Double-back-to-exit: timestamp of the last Menu press at the root of history.
 @property (nonatomic) CFAbsoluteTime lastExitBackPressTimestamp;
 @property (nonatomic) UILabel *exitHintLabel;
@@ -381,6 +406,14 @@ static UIColor *kTextColor(void) {
                                              selector:@selector(handleApplicationDidBecomeActive:)
                                                  name:UIApplicationDidBecomeActiveNotification
                                                object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleNativeVideoPlayerDidDismissNotification:)
+                                                 name:kBrowserNativeVideoPlayerDidDismissNotification
+                                               object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleTestForceSecondPresentNotification:)
+                                                 name:kBrowserTestForceSecondPresentNotification
+                                               object:nil];
 
     // Launch page preference: "Home Page" starts fresh; otherwise restore the last session.
     if (self.preferencesStore.launchPageMode == 1) {
@@ -412,6 +445,11 @@ static UIColor *kTextColor(void) {
     NSInteger count = [defaults integerForKey:@"NebulaLaunchCount"] + 1;
     [defaults setInteger:count forKey:@"NebulaLaunchCount"];
     if (count % 10 == 0) {
+        // Asking for no launch hints covers the support screen too; the menu's
+        // "Support Nebula" entry is unaffected.
+        if ([[NSUserDefaults standardUserDefaults] boolForKey:@"DontShowHintsOnLaunch"]) {
+            return;
+        }
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (self.presentedViewController == nil) {
                 [self showDonateScreen];
@@ -450,6 +488,25 @@ static UIColor *kTextColor(void) {
 - (void)handleApplicationDidBecomeActive:(NSNotification *)notification {
     (void)notification;
     [self hidePrivacyCover];
+}
+
+// The native player's view disappeared (Menu dismissal, close, ...): open the
+// auto-fullscreen suppression window so the embed watchdog's iframe reload
+// cannot immediately re-present the player the user just dismissed.
+- (void)handleNativeVideoPlayerDidDismissNotification:(NSNotification *)notification {
+    (void)notification;
+    self.lastNativePlayerDismissUptime = CFAbsoluteTimeGetCurrent();
+}
+
+// Test-only path (kBrowserTestForceSecondPresentNotification): re-present the
+// native player from the media probes. Deliberately no modal guard: an
+// automated run schedules this right after a dismissal to exercise a second
+// presentation, so any alert/modal in the way must not block it. The run
+// drives this after the player just played (probe silenced while the native
+// player owns playback), so accept probes up to 600s old like a user hold.
+- (void)handleTestForceSecondPresentNotification:(NSNotification *)notification {
+    (void)notification;
+    [self.videoPlaybackCoordinator presentNativePlayerFromMediaProbesSilentlyAllowingReportAge:600.0];
 }
 
 // Persist or wipe browsing state when leaving the app, per privacy preferences.
@@ -708,6 +765,30 @@ static UIColor *kTextColor(void) {
         }
     }
 
+    [alertController addAction:[UIAlertAction actionWithTitle:[self popupBlockerToggleTitle]
+                                                        style:UIAlertActionStyleDefault
+                                                      handler:^(__unused UIAlertAction *action) {
+        [self togglePopupBlockerPreference];
+    }]];
+
+    [alertController addAction:[UIAlertAction actionWithTitle:[self autoFullscreenPromptToggleTitle]
+                                                        style:UIAlertActionStyleDefault
+                                                      handler:^(__unused UIAlertAction *action) {
+        [self toggleAutoFullscreenPromptPreference];
+    }]];
+
+    [alertController addAction:[UIAlertAction actionWithTitle:[self nativeVideoModeToggleTitle]
+                                                        style:UIAlertActionStyleDefault
+                                                      handler:^(__unused UIAlertAction *action) {
+        [self toggleNativeVideoModePreference];
+    }]];
+
+    [alertController addAction:[UIAlertAction actionWithTitle:[self autoFullscreenToggleTitle]
+                                                        style:UIAlertActionStyleDefault
+                                                      handler:^(__unused UIAlertAction *action) {
+        [self toggleAutoFullscreenPreference];
+    }]];
+
     [alertController addAction:[UIAlertAction actionWithTitle:@"Settings"
                                                         style:UIAlertActionStyleDefault
                                                       handler:^(__unused UIAlertAction *action) {
@@ -911,7 +992,89 @@ static UIColor *kTextColor(void) {
 }
 
 - (void)browserPlayVideoUnderCursorIfAvailable {
-    [self.videoPlaybackCoordinator playVideoUnderCursorIfAvailable];
+    // Cursor path first (unchanged behavior); when it finds nothing playable
+    // under the cursor, fall back to the per-frame media probes so videos
+    // inside cross-origin player iframes can still be reached.
+    if (![self.videoPlaybackCoordinator playVideoUnderCursorIfAvailable]) {
+        [self.videoPlaybackCoordinator presentNativePlayerFromMediaProbes];
+    }
+}
+
+#pragma mark - Popup blocker / auto-fullscreen prompt toggles
+
+// Both toggles flip (default-NO) NSUserDefaults keys read when a web view is
+// created, so they apply to pages opened from now on; the confirmation alert
+// makes that scope explicit on the TV (no way to see a settings checkmark).
+- (NSString *)popupBlockerToggleTitle {
+    return [[NSUserDefaults standardUserDefaults] boolForKey:@"PopupBlockerDisabled"] ? @"Popup Blocker Off" : @"Popup Blocker On";
+}
+
+- (NSString *)autoFullscreenPromptToggleTitle {
+    return [[NSUserDefaults standardUserDefaults] boolForKey:@"NativeAutoFullscreenPromptDisabled"] ? @"Auto Fullscreen Prompt Off" : @"Auto Fullscreen Prompt On";
+}
+
+// Native Video Mode (default ON): MSE is killed so embeds fall back to a
+// native <video src=m3u8> AVPlayer can play. Turning it OFF re-enables MSE
+// and needs a fresh web view, so it goes through the same recreate flow the
+// User-Agent toggle uses.
+- (NSString *)nativeVideoModeToggleTitle {
+    return [[NSUserDefaults standardUserDefaults] boolForKey:@"NativeVideoModeDisabled"] ? @"Native Video Mode Off" : @"Native Video Mode On";
+}
+
+// With Native Video Mode on, an embed video that starts playing is taken
+// over by the native player automatically; this toggle suppresses that.
+- (NSString *)autoFullscreenToggleTitle {
+    return [[NSUserDefaults standardUserDefaults] boolForKey:@"NativeAutoFullscreenDisabled"] ? @"Auto Fullscreen Off" : @"Auto Fullscreen On";
+}
+
+- (void)togglePopupBlockerPreference {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    BOOL disabled = ![defaults boolForKey:@"PopupBlockerDisabled"];
+    [defaults setBool:disabled forKey:@"PopupBlockerDisabled"];
+    [defaults synchronize];
+    [self presentToggleConfirmationMessage:[NSString stringWithFormat:@"Popup Blocker is now %@. It applies to pages opened from now on.", disabled ? @"OFF" : @"ON"]];
+}
+
+- (void)toggleAutoFullscreenPromptPreference {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    BOOL disabled = ![defaults boolForKey:@"NativeAutoFullscreenPromptDisabled"];
+    [defaults setBool:disabled forKey:@"NativeAutoFullscreenPromptDisabled"];
+    [defaults synchronize];
+    [self presentToggleConfirmationMessage:[NSString stringWithFormat:@"Auto Fullscreen Prompt is now %@. It applies to pages opened from now on.", disabled ? @"OFF" : @"ON"]];
+}
+
+- (void)toggleNativeVideoModePreference {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    BOOL disabled = ![defaults boolForKey:@"NativeVideoModeDisabled"];
+    [defaults setBool:disabled forKey:@"NativeVideoModeDisabled"];
+    [defaults synchronize];
+    if (disabled && self.webview != nil) {
+        // MSE comes back with the mode off: rebuild the web view (the same
+        // flow the User-Agent toggle uses) so the new media preferences and
+        // user scripts apply to the current page right away.
+        [self.tabCoordinator captureSnapshotForCurrentTab];
+        [self browserRecreateActiveWebViewPreservingCurrentURL];
+        [self browserBringCursorToFront];
+    }
+    else {
+        [self presentToggleConfirmationMessage:[NSString stringWithFormat:@"Native Video Mode is now %@. It applies to pages opened from now on.", disabled ? @"OFF" : @"ON"]];
+    }
+}
+
+- (void)toggleAutoFullscreenPreference {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    BOOL disabled = ![defaults boolForKey:@"NativeAutoFullscreenDisabled"];
+    [defaults setBool:disabled forKey:@"NativeAutoFullscreenDisabled"];
+    [defaults synchronize];
+    [self presentToggleConfirmationMessage:[NSString stringWithFormat:@"Auto Fullscreen is now %@. It applies to pages opened from now on.", disabled ? @"OFF" : @"ON"]];
+}
+
+- (void)presentToggleConfirmationMessage:(NSString *)message {
+    UIAlertController *alertController = [UIAlertController alertControllerWithTitle:@"Nebula Browser"
+                                                                              message:message
+                                                                       preferredStyle:UIAlertControllerStyleAlert];
+    [alertController addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alertController animated:YES completion:nil];
 }
 
 #pragma mark - BrowserVideoPlaybackCoordinatorHost
@@ -1194,6 +1357,92 @@ static UIColor *kTextColor(void) {
     }
 }
 
+// Single Play/Pause press: WebKit pauses the page video on the first press and
+// it never resumes, so toggle the largest visible <video> (top document and
+// same-origin iframes) both ways. With a native video player presented the
+// press belongs to it: existing behavior untouched. When no video is found or
+// toggled the legacy press behavior (search box / alert dismiss) runs.
+- (BOOL)browserRemoteInputControllerHandlePlayPauseToggleInPageVideo {
+    UIViewController *presented = self.presentedViewController;
+    if (presented != nil) {
+        // Native player on screen: its own transport handles Play/Pause.
+        // Any other modal (alerts, ...) keeps the legacy press behavior.
+        return [presented isKindOfClass:[BrowserNativeVideoPlayerViewController class]];
+    }
+
+    static NSString *const kToggleLargestVideoScript =
+        @"(function(){"
+        "function bestVisibleVideo(doc){"
+            "var best=null;var bestArea=-1;"
+            "try{"
+                "var vids=doc.querySelectorAll('video');"
+                "for(var i=0;i<vids.length;i++){"
+                    "var v=vids[i];"
+                    "try{"
+                        "var r=v.getBoundingClientRect();"
+                        "var w=r.width||0;var h=r.height||0;"
+                        "if(w<2||h<2){continue;}"
+                        "var area=w*h;"
+                        "if(area>bestArea){bestArea=area;best={video:v,area:area};}"
+                    "}catch(e){}"
+                "}"
+            "}catch(e){}"
+            "return best;"
+        "}"
+        "var best=bestVisibleVideo(document);"
+        "try{"
+            "var frames=document.querySelectorAll('iframe,frame');"
+            "for(var f=0;f<frames.length;f++){"
+                "try{"
+                    // Cross-origin frames throw on contentDocument access:
+                    // the catch keeps us on same-origin frames only.
+                    "var d=frames[f].contentDocument;"
+                    "if(!d||!d.querySelectorAll){continue;}"
+                    "var inner=bestVisibleVideo(d);"
+                    "if(inner&&(best===null||inner.area>best.area)){best=inner;}"
+                "}catch(e){}"
+            "}"
+        "}catch(e){}"
+        "if(best===null){return false;}"
+        "var v=best.video;"
+        "try{"
+            "if(v.ended===false&&v.paused===true){"
+                "var p=v.play();"
+                "if(p&&p.catch){p.catch(function(){});}"
+                "return true;"
+            "}"
+            "if(v.paused===false){v.pause();return true;}"
+        "}catch(e){}"
+        "return false;"
+        "})()";
+
+    __weak typeof(self) weakSelf = self;
+    [self.webview evaluateJavaScriptStringAsync:kToggleLargestVideoScript completion:^(id result) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            typeof(self) strongSelf = weakSelf;
+            if (strongSelf == nil) {
+                return;
+            }
+            BOOL handled = [result isKindOfClass:[NSNumber class]] && [(NSNumber *)result boolValue];
+            if (!handled) {
+                // No video to toggle: run the legacy press behavior now.
+                [strongSelf browserRemoteInputControllerHandlePlayPausePress];
+            }
+        });
+    }];
+    return YES;
+}
+
+// Hold (long-press) Play/Pause: Tanghulu-style native takeover of the best
+// video the page's frames reported (see BrowserVideoPlaybackCoordinator).
+- (void)browserRemoteInputControllerHandlePlayPauseHold {
+    // With a modal up (player, alerts, ...) the press belongs to it.
+    if (self.presentedViewController != nil) {
+        return;
+    }
+    [self.videoPlaybackCoordinator presentNativePlayerFromMediaProbes];
+}
+
 - (void)browserRemoteInputControllerHandleAdvancedMenuPress {
     [self showAdvancedMenu];
 }
@@ -1235,6 +1484,56 @@ static UIColor *kTextColor(void) {
     return [self.tabCoordinator createNewTabWithRequest:request];
 }
 
+// Whether `host` is `potentialParent` itself or a subdomain of it
+// (case-insensitive textual descendant). An empty side is never a match.
+static BOOL BrowserHostIsTextualDescendantOfHost(NSString *host, NSString *potentialParent) {
+    if (host.length == 0 || potentialParent.length == 0) {
+        return NO;
+    }
+    NSString *lowercaseHost = host.lowercaseString;
+    NSString *lowercaseParent = potentialParent.lowercaseString;
+    return [lowercaseHost isEqualToString:lowercaseParent] ||
+           [lowercaseHost hasSuffix:[@"." stringByAppendingString:lowercaseParent]];
+}
+
+// New-tab requests (window.open/target=_blank the popup blocker allowed) ask
+// the user first: the alert opens the tab itself, so the page's own play
+// button can no longer navigate away silently.
+- (BOOL)webView:(id)webView wantsConfirmationForNewTabRequest:(NSURLRequest *)request navigationType:(NSInteger)navigationType {
+    (void)webView;
+    (void)navigationType;
+    if (self.presentedViewController != nil) {
+        // A modal already owns the screen: no alert possible, fall back to
+        // the unconfirmed new-tab flow.
+        return NO;
+    }
+
+    NSString *message = request.URL.absoluteString ?: @"";
+    if (message.length > 120) {
+        message = [message substringToIndex:120];
+    }
+    // Cross-site main-frame popups (target host not a textual descendant of
+    // the opener page's host) keep the same prompt with an ad warning.
+    if (!BrowserHostIsTextualDescendantOfHost(request.URL.host, self.webview.request.URL.host)) {
+        message = [@"Possible ad pop-up: " stringByAppendingString:message];
+    }
+    UIAlertController *alertController = [UIAlertController alertControllerWithTitle:@"Open in new tab?"
+                                                                            message:message
+                                                                      preferredStyle:UIAlertControllerStyleAlert];
+    [alertController addAction:[UIAlertAction actionWithTitle:@"Stay on this page"
+                                                         style:UIAlertActionStyleCancel
+                                                       handler:nil]];
+    __weak typeof(self) weakSelf = self;
+    [alertController addAction:[UIAlertAction actionWithTitle:@"Open in new tab"
+                                                        style:UIAlertActionStyleDefault
+                                                      handler:^(__unused UIAlertAction *action) {
+        // Same tab-opening flow the handledInTab path uses.
+        [weakSelf.tabCoordinator createNewTabWithRequest:request];
+    }]];
+    [self presentViewController:alertController animated:YES completion:nil];
+    return YES;
+}
+
 - (BOOL)webView:(id)webView shouldStartLoadWithRequest:(NSURLRequest *)request navigationType:(NSInteger)navigationType {
     (void)navigationType;
     [self.tabCoordinator prepareTabForRequest:request webView:webView];
@@ -1246,6 +1545,185 @@ static UIColor *kTextColor(void) {
     // Page fullscreen button pressed (fake-fullscreen user script bridge):
     // open our native player instead of WebKit's broken tvOS fullscreen.
     [self.videoPlaybackCoordinator handlePageFullscreenRequestWithInfo:videoInfo];
+}
+
+// A streameast-type embed's video started playing in the page. In Native
+// Video Mode (default) take over immediately with the native player — no
+// alert — unless NativeAutoFullscreenDisabled is set; then (or with the mode
+// off) fall back to the legacy confirmation prompt, itself suppressed via
+// NativeAutoFullscreenPromptDisabled. Skipped while a player or modal already
+// owns the screen — the manual hold-to-enter path on Play/Pause is unchanged
+// either way.
+- (void)webView:(id)webView didDetectPlayingEmbedVideoReport:(NSDictionary *)report {
+    (void)webView;
+    (void)report;
+    // Dismissal suppression window: any user dismissal (Menu on the native
+    // player, "Keep playing here") ends auto-presentation for this embed for
+    // a long window; the embed watchdog replays the iframe within seconds.
+    NSTimeInterval now = CFAbsoluteTimeGetCurrent();
+    NSTimeInterval elapsedSinceDismissal = now - self.lastNativePlayerDismissUptime;
+    if (self.lastNativePlayerDismissUptime > 0.0 &&
+        elapsedSinceDismissal < kNativePlayerDismissSuppressionInterval) {
+        if (now - self.lastDismissSuppressionLogUptime >= kNativePlayerDismissSuppressionLogInterval) {
+            self.lastDismissSuppressionLogUptime = now;
+            NSLog(@"[NativeVideoPlayer] auto-fullscreen suppressed after dismissal (%ld s remaining)",
+                  (long)llround(kNativePlayerDismissSuppressionInterval - elapsedSinceDismissal));
+        }
+        return;
+    }
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    BOOL autoFullscreenEnabled = ![defaults boolForKey:@"NativeVideoModeDisabled"] &&
+                                 ![defaults boolForKey:@"NativeAutoFullscreenDisabled"];
+    if (autoFullscreenEnabled) {
+        if (self.presentedViewController != nil) {
+            return;
+        }
+        // Silent variant: with only a blob:/MSE src and no captured playlist
+        // there is nothing AVPlayer can open, so no-op instead of alerting.
+        NSLog(@"[NativeVideoPlayer] auto-fullscreen: presenting native player for embed video");
+        [self.videoPlaybackCoordinator presentNativePlayerFromMediaProbesSilently];
+        return;
+    }
+    if ([defaults boolForKey:@"NativeAutoFullscreenPromptDisabled"]) {
+        return;
+    }
+    if (self.presentedViewController != nil) {
+        return;
+    }
+    if ([defaults boolForKey:@"ForceNativePresentOnPlay"]) {
+        // Unattended force-native-present runs: this very alert would count as
+        // a modal and stall the force-retry loop ("modal up"), so skip it and
+        // perform the "Play full screen" action directly. That action is
+        // inherently deferred (it hops to the next main-queue turn to present),
+        // and if a modal is up at that point the existing force-retry loop
+        // performs the presentation itself.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.videoPlaybackCoordinator presentNativePlayerFromMediaProbes];
+        });
+        return;
+    }
+    UIAlertController *alertController = [UIAlertController alertControllerWithTitle:@"Live video detected"
+                                                                              message:@"Play full screen?"
+                                                                        preferredStyle:UIAlertControllerStyleAlert];
+    // Default (focused) action keeps playback in the page: record the same
+    // dismissal timestamp (opens the suppression window so the auto path
+    // can't immediately counteract the user's choice) and resume the video
+    // the page paused while our alert had focus.
+    [alertController addAction:[UIAlertAction actionWithTitle:@"Keep playing here"
+                                                         style:UIAlertActionStyleCancel
+                                                       handler:^(__unused UIAlertAction *action) {
+        self.lastNativePlayerDismissUptime = CFAbsoluteTimeGetCurrent();
+        [self resumeLargestVisiblePageVideo];
+    }]];
+    [alertController addAction:[UIAlertAction actionWithTitle:@"Play full screen"
+                                                         style:UIAlertActionStyleDefault
+                                                       handler:^(__unused UIAlertAction *action) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self.videoPlaybackCoordinator presentNativePlayerFromMediaProbes];
+        });
+    }]];
+    [self presentViewController:alertController animated:YES completion:nil];
+}
+
+// "Keep playing here": the page paused its own video while our alert had
+// focus and never resumes it. Find the largest visible <video> (top document
+// and same-origin iframes, the media probes' selection convention) and call
+// play() when it sits paused. Fire-and-forget: no new UI.
+- (void)resumeLargestVisiblePageVideo {
+    static NSString *const kResumeLargestVideoScript =
+        @"(function(){"
+        "function bestVisibleVideo(doc){"
+            "var best=null;var bestArea=-1;"
+            "try{"
+                "var vids=doc.querySelectorAll('video');"
+                "for(var i=0;i<vids.length;i++){"
+                    "var v=vids[i];"
+                    "try{"
+                        "var r=v.getBoundingClientRect();"
+                        "var w=r.width||0;var h=r.height||0;"
+                        "if(w<2||h<2){continue;}"
+                        "var area=w*h;"
+                        "if(area>bestArea){bestArea=area;best={video:v,area:area};}"
+                    "}catch(e){}"
+                "}"
+            "}catch(e){}"
+            "return best;"
+        "}"
+        "var best=bestVisibleVideo(document);"
+        "try{"
+            "var frames=document.querySelectorAll('iframe,frame');"
+            "for(var f=0;f<frames.length;f++){"
+                "try{"
+                    // Cross-origin frames throw on contentDocument access:
+                    // the catch keeps us on same-origin frames only.
+                    "var d=frames[f].contentDocument;"
+                    "if(!d||!d.querySelectorAll){continue;}"
+                    "var inner=bestVisibleVideo(d);"
+                    "if(inner&&(best===null||inner.area>best.area)){best=inner;}"
+                "}catch(e){}"
+            "}"
+        "}catch(e){}"
+        "if(best===null){return false;}"
+        "var v=best.video;"
+        "try{"
+            "if(v.paused===true&&v.ended===false){"
+                "var p=v.play();"
+                "if(p&&p.catch){p.catch(function(){});}"
+                "return true;"
+            "}"
+        "}catch(e){}"
+        "return false;"
+        "})()";
+    [self.webview evaluateJavaScriptStringAsync:kResumeLargestVideoScript];
+}
+
+// ForceNativePresentOnPlay (default-NO launch flag, reported by the web view
+// once per document when a probe first shows a playing video): auto-present
+// the native fullscreen player through the same entry point the Play/Pause
+// HOLD takeover uses, so unattended test runs exercise native presentation.
+- (void)webViewWantsForcedNativePresentation:(id)webView {
+    (void)webView;
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"ForceNativePresentOnPlay"]) {
+        return;
+    }
+    if (self.presentedViewController == nil) {
+        [self.videoPlaybackCoordinator presentNativePlayerFromMediaProbes];
+        return;
+    }
+    // A launch modal (the "Support Nebula Browser" donate screen among them)
+    // routinely covers the page at this exact moment, and the flag fires once
+    // per document, so returning here would drop the presentation for good.
+    if (self.forceNativePresentRetryPending == NO) {
+        self.forceNativePresentRetryAttempt = 0;
+        [self scheduleForcedNativePresentationRetry];
+    }
+}
+
+// Retry a deferred forced presentation until it lands or the attempt cap is
+// reached. Uses the coordinator's silent variant so an attempt that finds only
+// a blob:/MSE src with no captured playlist never stacks a "Native Video
+// Unavailable" alert. This is the Play/Pause HOLD path: the probe script is
+// silent while the native player plays, so accept probes up to 600s old.
+- (void)scheduleForcedNativePresentationRetry {
+    self.forceNativePresentRetryPending = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kForceNativePresentRetryInterval * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(),
+                   ^{
+        self.forceNativePresentRetryAttempt += 1;
+        BOOL presented = NO;
+        if (self.presentedViewController != nil) {
+            NSLog(@"force-native-present deferred (modal up), retry %lu",
+                  (unsigned long)self.forceNativePresentRetryAttempt);
+        } else {
+            presented = [self.videoPlaybackCoordinator presentNativePlayerFromMediaProbesSilentlyAllowingReportAge:600.0];
+        }
+        if (presented || self.forceNativePresentRetryAttempt >= kForceNativePresentMaxRetries) {
+            self.forceNativePresentRetryPending = NO;
+            self.forceNativePresentRetryAttempt = 0;
+            return;
+        }
+        [self scheduleForcedNativePresentationRetry];
+    });
 }
 
 - (void)webViewDidStartLoad:(id)webView {

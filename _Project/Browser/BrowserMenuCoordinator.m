@@ -1364,6 +1364,42 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
     return item;
 }
 
+// Confirmation alert for the NSUserDefaults-backed toggles; the values apply
+// to web views created from now on, which the alert states explicitly.
+- (void)presentToggleConfirmationMessage:(NSString *)message {
+    UIAlertController *alertController = [self browserAlertControllerWithTitle:@"Nebula Browser" message:message];
+    [alertController addAction:[self browserActionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self.host browserPresentViewController:alertController];
+}
+
+- (BrowserAdvancedMenuItem *)popupBlockerToggleMenuItem {
+    BOOL enabled = ![[NSUserDefaults standardUserDefaults] boolForKey:@"PopupBlockerDisabled"];
+    NSString *title = enabled ? @"Popup Blocker: On — Turn Off" : @"Popup Blocker: Off — Turn On";
+    return [self advancedMenuItemWithTitle:title
+                                     style:UIAlertActionStyleDefault
+                                   handler:^{
+        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+        BOOL disabled = ![defaults boolForKey:@"PopupBlockerDisabled"];
+        [defaults setBool:disabled forKey:@"PopupBlockerDisabled"];
+        [defaults synchronize];
+        [self presentToggleConfirmationMessage:[NSString stringWithFormat:@"Popup Blocker is now %@. It applies to pages opened from now on.", disabled ? @"OFF" : @"ON"]];
+    }];
+}
+
+- (BrowserAdvancedMenuItem *)autoFullscreenPromptToggleMenuItem {
+    BOOL enabled = ![[NSUserDefaults standardUserDefaults] boolForKey:@"NativeAutoFullscreenPromptDisabled"];
+    NSString *title = enabled ? @"Auto Fullscreen Prompt: On — Turn Off" : @"Auto Fullscreen Prompt: Off — Turn On";
+    return [self advancedMenuItemWithTitle:title
+                                     style:UIAlertActionStyleDefault
+                                   handler:^{
+        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+        BOOL disabled = ![defaults boolForKey:@"NativeAutoFullscreenPromptDisabled"];
+        [defaults setBool:disabled forKey:@"NativeAutoFullscreenPromptDisabled"];
+        [defaults synchronize];
+        [self presentToggleConfirmationMessage:[NSString stringWithFormat:@"Auto Fullscreen Prompt is now %@. It applies to pages opened from now on.", disabled ? @"OFF" : @"ON"]];
+    }];
+}
+
 - (BrowserAdvancedMenuItem *)arrowShortcutsToggleMenuItem {
     NSString *(^titleForState)(BOOL) = ^NSString *(BOOL enabled) {
         return enabled ? @"Arrow Double-Press Shortcuts: On" : @"Arrow Double-Press Shortcuts: Off";
@@ -1498,6 +1534,7 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
                                                items:@[
             [self fullscreenVideoPlaybackToggleMenuItem],
             [self videoHUDTimeDisplayToggleMenuItem],
+            [self autoFullscreenPromptToggleMenuItem],
         ]],
         [BrowserAdvancedMenuSection sectionWithTitle:@"Search"
                                                items:@[
@@ -1512,6 +1549,7 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
         [BrowserAdvancedMenuSection sectionWithTitle:@"Compatibility"
                                                items:@[
             [self userAgentModeMenuItem],
+            [self popupBlockerToggleMenuItem],
         ]],
         [BrowserAdvancedMenuSection sectionWithTitle:@"Diagnostics"
                                                items:@[

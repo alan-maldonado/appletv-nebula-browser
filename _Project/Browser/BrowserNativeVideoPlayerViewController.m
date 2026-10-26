@@ -4,12 +4,17 @@
 
 #import <AVFoundation/AVFoundation.h>
 
+NSNotificationName const kBrowserNativeVideoPlayerDidDismissNotification = @"BrowserNativeVideoPlayerDidDismissNotification";
+NSNotificationName const kBrowserTestForceSecondPresentNotification = @"BrowserTestForceSecondPresentNotification";
+
 static NSString * const kBrowserNativeVideoPlayerLogPrefix = @"[NativeVideoPlayer]";
 static NSString * const kBrowserNativePlayerInputLogPrefix = @"[InputTrace][NativePlayer]";
 static NSString * const kBrowserVideoResumePositionsDefaultsKey = @"VideoResumePositions";
 static NSUInteger const kBrowserVideoResumeMaxEntries = 50;
 // No resume near the start (not worth it) or near the end (counts as watched).
 static NSTimeInterval const kBrowserVideoResumeEdgeMargin = 30.0;
+// User-confirmed failure retries allowed per player presentation.
+static NSUInteger const kBrowserNativePlayerMaxFailureRetries = 2;
 
 static NSString *BrowserNativePlayerPressTypeString(UIPressType type) {
     switch (type) {
@@ -35,12 +40,31 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
     }
 }
 
+// Plain-AVURLAsset mode (Tanghulu-style): keeps every header the current code
+// already assembles except Origin, which the segment storage hosts of the
+// streameast family 404 on sight (curl-proven), and empty-value entries that
+// AVFoundation's option parsing has no use for.
+static NSDictionary<NSString *, NSString *> *BrowserPlainPlaybackHeaderFields(NSDictionary<NSString *, NSString *> *headers) {
+    NSMutableDictionary<NSString *, NSString *> *clean = [NSMutableDictionary dictionary];
+    [headers enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSString *value, __unused BOOL *stop) {
+        if ([key caseInsensitiveCompare:@"Origin"] == NSOrderedSame) {
+            return;
+        }
+        if (![value isKindOfClass:[NSString class]] || value.length == 0) {
+            return;
+        }
+        clean[key] = value;
+    }];
+    return clean;
+}
+
 @interface BrowserNativeVideoPlayerViewController ()
 
 @property (nonatomic, strong) NSURL *videoURL;
 @property (nonatomic, copy) NSString *videoTitle;
 @property (nonatomic, copy) NSDictionary<NSString *, NSString *> *requestHeaders;
 @property (nonatomic, copy) NSArray<NSHTTPCookie *> *requestCookies;
+@property (nonatomic, copy) NSArray<NSURL *> *candidateMasterPlaylistURLs;
 @property (nonatomic, strong) BrowserNativeVideoAssetLoader *assetLoader;
 
 // Custom fast-forward scanning state (1.0 or 0.0 = normal playback, >1.0 = scanning).
@@ -79,6 +103,15 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
 @property (nonatomic, assign) BOOL didAttemptResume;
 @property (nonatomic, assign) NSTimeInterval lastResumeSaveTimestamp;
 
+// Load-failure retry alert state.
+@property (nonatomic, assign) NSUInteger failureRetryCount;
+@property (nonatomic, assign) BOOL failureAlertRechecked;
+// YES while the failure alert is up (it lives above the player in the
+// presentation chain, so self.presentedViewController cannot guard it).
+@property (nonatomic, assign) BOOL failureAlertPresented;
+
+- (BOOL)customTransportEnabled;
+
 @end
 
 @implementation BrowserNativeVideoPlayerViewController
@@ -99,12 +132,21 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
                       title:(NSString *)title
              requestHeaders:(NSDictionary<NSString *,NSString *> *)requestHeaders
                     cookies:(NSArray<NSHTTPCookie *> *)cookies {
+    return [self initWithURL:URL title:title requestHeaders:requestHeaders cookies:cookies candidateMasterPlaylistURLs:nil];
+}
+
+- (instancetype)initWithURL:(NSURL *)URL
+                      title:(NSString *)title
+             requestHeaders:(NSDictionary<NSString *,NSString *> *)requestHeaders
+                    cookies:(NSArray<NSHTTPCookie *> *)cookies
+  candidateMasterPlaylistURLs:(NSArray<NSURL *> *)candidateMasterPlaylistURLs {
     self = [super initWithNibName:nil bundle:nil];
     if (self) {
         _videoURL = URL;
         _videoTitle = [title copy] ?: @"";
         _requestHeaders = [requestHeaders copy] ?: @{};
         _requestCookies = [cookies copy] ?: @[];
+        _candidateMasterPlaylistURLs = [candidateMasterPlaylistURLs copy] ?: @[];
         self.modalPresentationStyle = UIModalPresentationFullScreen;
     }
     return self;
@@ -114,11 +156,33 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
     [super viewDidLoad];
 
     self.view.backgroundColor = UIColor.blackColor;
-    // All transport input and UI is ours (FF scanning, scrub, skips, toggle, HUD);
-    // AVKit's overlay would just be a second, out-of-sync progress bar.
-    self.showsPlaybackControls = NO;
+    // AVKit's playback controls are the default (a stalled/failed stream must
+    // never leave the user with zero controls); our custom transport UI
+    // (FF scanning, scrub HUD) is opt-in via NativePlayerCustomTransportEnabled.
+    self.showsPlaybackControls = ![self customTransportEnabled];
     AVPlayerItem *playerItem = nil;
-    if (self.requestHeaders.count > 0 || self.requestCookies.count > 0) {
+    BOOL loaderDisabled = [[NSUserDefaults standardUserDefaults] boolForKey:@"NativePlayerLoaderDisabled"];
+    if (loaderDisabled) {
+        // Tanghulu-style plain AVFoundation native HLS: same header/UA/cookie
+        // options as the loader path (minus Origin and empty values), but no
+        // resource-loader interception — the loader path fails on these streams
+        // (CoreMedia -12881 rejections, Origin-poisoned cross-host redirects).
+        NSMutableDictionary *assetOptions = [NSMutableDictionary dictionary];
+        NSDictionary<NSString *, NSString *> *plainHeaders = BrowserPlainPlaybackHeaderFields(self.requestHeaders);
+        if (plainHeaders.count > 0) {
+            assetOptions[@"AVURLAssetHTTPHeaderFieldsKey"] = plainHeaders;
+            NSString *userAgent = self.requestHeaders[@"User-Agent"];
+            if (userAgent.length > 0) {
+                assetOptions[@"AVURLAssetHTTPUserAgentKey"] = userAgent;
+            }
+        }
+        if (self.requestCookies.count > 0) {
+            assetOptions[@"AVURLAssetHTTPCookiesKey"] = self.requestCookies;
+        }
+        AVURLAsset *asset = [AVURLAsset URLAssetWithURL:self.videoURL options:assetOptions];
+        playerItem = [AVPlayerItem playerItemWithAsset:asset];
+        [self log:@"player asset mode=plain headers=%lu cookies=%lu", (unsigned long)plainHeaders.count, (unsigned long)self.requestCookies.count];
+    } else if (self.requestHeaders.count > 0 || self.requestCookies.count > 0) {
         NSMutableDictionary *assetOptions = [NSMutableDictionary dictionary];
         if (self.requestHeaders.count > 0) {
             assetOptions[@"AVURLAssetHTTPHeaderFieldsKey"] = self.requestHeaders;
@@ -131,13 +195,16 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
             assetOptions[@"AVURLAssetHTTPCookiesKey"] = self.requestCookies;
         }
         self.assetLoader = [[BrowserNativeVideoAssetLoader alloc] initWithRequestHeaders:self.requestHeaders cookies:self.requestCookies];
+        self.assetLoader.fresherMasterURLs = self.candidateMasterPlaylistURLs;
         NSURL *assetURL = [self.assetLoader assetURLForPlaybackURL:self.videoURL];
         AVURLAsset *asset = [AVURLAsset URLAssetWithURL:assetURL options:assetOptions];
         [self.assetLoader attachToAsset:asset];
         playerItem = [AVPlayerItem playerItemWithAsset:asset];
+        [self log:@"player asset mode=loader"];
         [self log:@"using request headers %@ cookies=%lu", self.requestHeaders, (unsigned long)self.requestCookies.count];
     } else {
         playerItem = [AVPlayerItem playerItemWithURL:self.videoURL];
+        [self log:@"player asset mode=plain"];
     }
     self.player = [AVPlayer playerWithPlayerItem:playerItem];
     [self log:@"created player url=%@", self.videoURL.absoluteString ?: @""];
@@ -192,6 +259,50 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
                          options:NSKeyValueObservingOptionInitial | NSKeyValueObservingOptionNew
                          context:NULL];
     }
+
+    // Test-only: auto-dismiss the player after N seconds (0 = disabled) so
+    // automated runs can measure the full present/dismiss lifecycle.
+    NSInteger autoDismissSeconds = [[NSUserDefaults standardUserDefaults] integerForKey:@"NativePresentAutoDismissSeconds"];
+    if (autoDismissSeconds > 0) {
+        __weak typeof(self) weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(autoDismissSeconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            typeof(self) strongSelf = weakSelf;
+            if (strongSelf == nil) {
+                return;
+            }
+            NSLog(@"%@ auto-dismiss firing (test)", kBrowserNativeVideoPlayerLogPrefix);
+            [strongSelf dismissViewControllerAnimated:YES completion:nil];
+        });
+    }
+
+    // Test-only: N seconds after the FIRST dismissal notification (0 =
+    // disabled), post kBrowserTestForceSecondPresentNotification so an
+    // automated run can exercise a second presentation.
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleDidDismissForSecondPresent:)
+                                                 name:kBrowserNativeVideoPlayerDidDismissNotification
+                                               object:nil];
+}
+
+// Fire-once (static, per process): the first dismissal notification schedules
+// the second-present test notification; the block holds no self reference as
+// the player is typically deallocated right after dismissal.
+- (void)handleDidDismissForSecondPresent:(NSNotification *)notification {
+    (void)notification;
+    static BOOL didScheduleSecondPresent = NO;
+    if (didScheduleSecondPresent) {
+        return;
+    }
+    NSInteger secondPresentSeconds = [[NSUserDefaults standardUserDefaults] integerForKey:@"NativePresentSecondPresentSeconds"];
+    if (secondPresentSeconds <= 0) {
+        return;
+    }
+    didScheduleSecondPresent = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(secondPresentSeconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        NSLog(@"%@ auto-second-present firing (test)", kBrowserNativeVideoPlayerLogPrefix);
+        [[NSNotificationCenter defaultCenter] postNotificationName:kBrowserTestForceSecondPresentNotification
+                                                            object:nil];
+    });
 }
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -209,6 +320,8 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
     [self stopScanTimer];
     self.scanRate = 1.0f;
     [self.player pause];
+    [[NSNotificationCenter defaultCenter] postNotificationName:kBrowserNativeVideoPlayerDidDismissNotification
+                                                        object:self];
 }
 
 - (void)dealloc {
@@ -224,6 +337,10 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
         [self.player removeObserver:self forKeyPath:@"timeControlStatus"];
     } @catch (__unused NSException *exception) {}
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (BOOL)customTransportEnabled {
+    return [[NSUserDefaults standardUserDefaults] boolForKey:@"NativePlayerCustomTransportEnabled"];
 }
 
 - (void)togglePlayback {
@@ -391,7 +508,7 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
 }
 
 - (void)updateScanRateLabel {
-    if (![self isScanning]) {
+    if (![self isScanning] || ![self customTransportEnabled]) {
         self.scanRateLabel.hidden = YES;
         return;
     }
@@ -526,6 +643,11 @@ static NSString *BrowserNativePlayerFormatTime(NSTimeInterval time) {
 }
 
 - (void)showPositionHUDForTarget:(NSTimeInterval)target {
+    // With AVKit's controls ON (the default) our overlay stays hidden; the
+    // HUD code below serves only the opt-in custom-transport mode.
+    if (![self customTransportEnabled]) {
+        return;
+    }
     if (self.positionHUDView == nil) {
         UIView *hud = [[UIView alloc] init];
         hud.translatesAutoresizingMaskIntoConstraints = NO;
@@ -775,6 +897,97 @@ static NSString *BrowserNativePlayerFormatTime(NSTimeInterval time) {
 - (void)handlePlayerItemFailedToPlayToEndTime:(NSNotification *)notification {
     NSError *error = notification.userInfo[AVPlayerItemFailedToPlayToEndTimeErrorKey];
     [self log:@"failedToPlayToEnd error=%@", error];
+    [self presentPlaybackFailureAlert];
+}
+
+// The failure alert must never be presented on the player VC itself: with
+// AVKit's content overlay holding focus the alert's buttons stay selectable
+// but remote presses never activate them. Walk the presentation chain from the
+// app root and present on the top-most VC above the player instead.
+- (UIViewController *)failureAlertPresentingViewController {
+    UIViewController *rootViewController = nil;
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) {
+            continue;
+        }
+        rootViewController = ((UIWindowScene *)scene).keyWindow.rootViewController;
+        if (rootViewController != nil) {
+            break;
+        }
+    }
+    UIViewController *presenter = rootViewController ?: self.presentingViewController ?: self;
+    while (presenter.presentedViewController != nil && presenter.presentedViewController != self) {
+        presenter = presenter.presentedViewController;
+    }
+    if (presenter == self) {
+        // Never present on the player itself (see comment above).
+        presenter = self.presentingViewController ?: (rootViewController ?: self);
+    }
+    return presenter;
+}
+
+// Item failed to load (initial status=failed or mid-playback failure): with
+// AVKit controls alone the user is stuck, so offer a host-driven retry from
+// the freshest probes. Capped per presentation to avoid retry loops.
+- (void)presentPlaybackFailureAlert {
+    if (self.viewIfLoaded.window == nil) {
+        // Status KVO can fire with its initial value before presentation;
+        // give it one more chance once the view is on screen.
+        if (self.viewIfLoaded != nil && !self.failureAlertRechecked) {
+            self.failureAlertRechecked = YES;
+            __weak typeof(self) weakSelf = self;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [weakSelf presentPlaybackFailureAlert];
+            });
+        }
+        return;
+    }
+    if (self.failureAlertPresented || self.failureRetryCount >= kBrowserNativePlayerMaxFailureRetries) {
+        return;
+    }
+
+    UIAlertController *alertController = [UIAlertController alertControllerWithTitle:@"Video failed to load"
+                                                                            message:@"Retry?"
+                                                                      preferredStyle:UIAlertControllerStyleAlert];
+    self.failureAlertPresented = YES;
+    __weak typeof(self) weakSelf = self;
+    __weak UIAlertController *weakAlert = alertController;
+    [alertController addAction:[UIAlertAction actionWithTitle:@"Close"
+                                                        style:UIAlertActionStyleCancel
+                                                      handler:^(__unused UIAlertAction *action) {
+        // Explicit dismiss (never rely on the cancel-action auto-dismiss here:
+        // the alert lives above the player and its buttons only activate from
+        // the remote once presented on the top-most VC). Dismiss the whole
+        // player presentation, alert included.
+        typeof(self) strongSelf = weakSelf;
+        UIViewController *dismissFrom = strongSelf != nil ? strongSelf.presentingViewController : weakAlert.presentingViewController;
+        [dismissFrom dismissViewControllerAnimated:YES completion:nil];
+    }]];
+    [alertController addAction:[UIAlertAction actionWithTitle:@"Retry"
+                                                        style:UIAlertActionStyleDefault
+                                                      handler:^(__unused UIAlertAction *action) {
+        typeof(self) strongSelf = weakSelf;
+        if (strongSelf == nil) {
+            return;
+        }
+        strongSelf.failureRetryCount += 1;
+        strongSelf.failureAlertPresented = NO;
+        void (^retry)(void) = strongSelf.onRetry;
+        void (^performRetry)(void) = ^{
+            if (retry != nil) {
+                retry();
+            }
+        };
+        // Dismiss the alert explicitly before invoking onRetry: the retry
+        // re-presents a fresh player and the alert must not linger on top.
+        UIViewController *dismissFrom = weakAlert.presentingViewController ?: strongSelf.presentingViewController;
+        if (dismissFrom != nil && dismissFrom.presentedViewController != nil) {
+            [dismissFrom dismissViewControllerAnimated:YES completion:performRetry];
+        } else {
+            performRetry();
+        }
+    }]];
+    [[self failureAlertPresentingViewController] presentViewController:alertController animated:YES completion:nil];
 }
 
 - (void)handlePlayerItemNewErrorLogEntry:(NSNotification *)notification {
@@ -803,6 +1016,7 @@ static NSString *BrowserNativePlayerFormatTime(NSTimeInterval time) {
                 break;
             case AVPlayerItemStatusFailed:
                 [self log:@"item status=failed error=%@", self.player.currentItem.error];
+                [self presentPlaybackFailureAlert];
                 break;
         }
         return;
