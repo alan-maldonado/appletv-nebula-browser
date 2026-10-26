@@ -27,6 +27,7 @@ body {
   background-attachment: fixed;
 }
 main { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+main > * { min-width: 0; } /* flex children must not grow to fit long unbroken text */
 
 header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 4px 2px; }
 .logo { width: 56px; height: 56px; flex: none; filter: drop-shadow(0 4px 14px rgba(0,0,0,.35)); }
@@ -34,12 +35,13 @@ header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding
 .wordmark { font-size: 22px; font-weight: 700; letter-spacing: .32em; }
 .sub { font-size: 12px; font-weight: 600; letter-spacing: .42em; color: var(--accent); margin-top: 4px; }
 .status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; flex-basis: 100%; min-width: 0; }
-.status span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #30D158; flex: none; box-shadow: 0 0 8px #30D158; }
 .status.off { color: var(--warn); }
 .status.off .dot { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
 
 .card {
+  min-width: 0; /* let long titles truncate instead of widening the layout */
   background: var(--glass); border: 1px solid var(--line); border-radius: 18px; padding: 16px;
   display: flex; flex-direction: column; gap: 12px;
   -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
@@ -128,7 +130,8 @@ footer { text-align: center; color: #8a83a8; font-size: 13px; }
   main { max-width: 1080px; }
   .section-bar { display: none; }
   .sections {
-    display: grid; gap: 16px; grid-template-columns: 1fr 1fr;
+    /* minmax(0, 1fr): a plain 1fr column grows to fit unbreakable content (long titles). */
+    display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas: "write trackpad" "tabs favorites" "tabs home";
     align-items: start;
   }
