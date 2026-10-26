@@ -139,7 +139,8 @@ footer { text-align: center; color: #8a83a8; font-size: 13px; }
   .panel { display: flex; }
   #write { grid-area: write; }
   #trackpad { grid-area: trackpad; }
-  #trackpad .pad { min-height: 300px; }
+  /* Same 16:9 shape as the TV, so one speed covers both axes (capped for short windows). */
+  #trackpad .pad { min-height: 300px; aspect-ratio: 16 / 9; max-height: 70vh; }
   #tabs { grid-area: tabs; }
   #favorites { grid-area: favorites; }
   #home { grid-area: home; }
