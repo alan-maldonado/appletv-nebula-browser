@@ -67,7 +67,7 @@ Panel web (iPhone/Mac)                          Nebula (Apple TV)
 | `BrowserRemoteState.h/.m` | Agrega `tabs`, `favorites`, `home`, `theme` con `update…` que solo suben la versión si cambió el valor. |
 | `BrowserRemoteHTTP.h/.m` | Validadores puros de los payloads nuevos. |
 | `ViewController.m` | Ejecuta las acciones; publica estado cuando cambian tabs (crear, cerrar, cambiar, cargar), favoritos (notificación), inicio y tema. |
-| `BrowserTabCoordinator.h/.m` | `indexOfTabWithIdentifier:`; notificar al host al crear/cerrar/cambiar tab (hoy solo vía `refreshActiveTabUI`, que ya cubre los tres). |
+| `BrowserTabCoordinator.h/.m` | `indexOfTabWithIdentifier:`. El host debe enterarse al crear, cerrar y cambiar de tab: `closeTabAtIndex:` ya llama `refreshActiveTabUI` (verificado); crear y cambiar se verifican en la implementación y, si no pasan por ahí, se agrega la llamada a `browserTabCoordinatorActiveTabDidRefresh`. |
 
 ## 5. API
 
