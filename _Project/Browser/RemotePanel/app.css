@@ -102,6 +102,7 @@ label.check input, label.radio input { width: 20px; height: 20px; accent-color: 
   color: var(--muted); font-size: 15px; padding: 16px; cursor: pointer;
   touch-action: none; user-select: none; -webkit-user-select: none; outline: none;
 }
+.pad.hover-mode { cursor: crosshair; }
 .pad.locked { border-style: solid; border-color: var(--accent); cursor: none; color: var(--text); }
 .pad-status { font-size: 13px; color: var(--warn); }
 .pad-status.on { color: #30D158; }

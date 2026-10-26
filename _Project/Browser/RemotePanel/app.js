@@ -372,35 +372,41 @@ function padRelockAfterField() {
 function setupPad() {
   var area = $('pad');
   loadPadSpeed();
-  $('padHint').textContent = TOUCH ? 'Arrastra para mover el cursor · toca para hacer clic · dos dedos para scroll'
-                                   : 'Clic para controlar la TV';
+  var hoverHint = 'Mueve el mouse aquí para mover el cursor de la TV · clic = clic · dos dedos = scroll';
+  $('padHint').textContent = TOUCH ? 'Arrastra para mover el cursor · toca para hacer clic · dos dedos para scroll' : hoverHint;
+  if (TOUCH) { $('padCapture').hidden = true; } else { area.classList.add('hover-mode'); }
+  $('padCapture').onclick = function () { area.requestPointerLock(); };
   $('padSpeed').oninput = function () { try { localStorage.setItem(SPEED_KEY, $('padSpeed').value); } catch (e) {} };
   $('padClick').onclick = padClick;
   $('padDouble').onclick = padDoubleClick;
 
-  // Mac / desktop: pointer lock.
-  area.addEventListener('click', function () {
-    if (TOUCH) { return; }
-    if (!padLocked()) { area.requestPointerLock(); return; }
-    padDeferredClick(250);
-  });
-  area.addEventListener('dblclick', function () {
-    if (!padLocked()) { return; }
-    padCancelClick();
-    padDoubleClick();
+  // Mac / desktop. Hover mode (default): moving over the pad drives the cursor, no click
+  // needed. "Capturar mouse" switches to pointer lock (no edges, Esc releases).
+  area.addEventListener('mousemove', function (event) {
+    // While locked, events are handled once by the document listener below.
+    if (!TOUCH && !padLocked()) { padQueue('m', event.movementX * padSpeed(), event.movementY * padSpeed()); }
   });
   document.addEventListener('mousemove', function (event) {
     if (padLocked()) { padQueue('m', event.movementX * padSpeed(), event.movementY * padSpeed()); }
   });
+  area.addEventListener('click', function () {
+    if (!TOUCH) { padDeferredClick(250); }
+  });
+  area.addEventListener('dblclick', function () {
+    if (TOUCH) { return; }
+    padCancelClick();
+    padDoubleClick();
+  });
   area.addEventListener('wheel', function (event) {
-    if (!padLocked()) { return; }
+    if (TOUCH) { return; }
     event.preventDefault();
     padQueue('s', event.deltaX, event.deltaY);
   }, { passive: false });
   document.addEventListener('pointerlockchange', function () {
     var locked = padLocked();
     area.classList.toggle('locked', locked);
-    if (!TOUCH) { $('padHint').textContent = locked ? 'Controlando la TV · Esc para soltar' : 'Clic para controlar la TV'; }
+    $('padCapture').textContent = locked ? 'Esc para soltar' : 'Capturar mouse';
+    if (!TOUCH) { $('padHint').textContent = locked ? 'Mouse capturado · Esc para soltar' : hoverHint; }
   });
 
   // iPhone / touch: 1 finger moves, tap clicks, double tap double-clicks, 2 fingers scroll.
