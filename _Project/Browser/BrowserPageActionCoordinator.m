@@ -12,6 +12,10 @@
 @property (nonatomic) BrowserNavigationService *navigationService;
 @property (nonatomic) BrowserVideoPlaybackCoordinator *videoPlaybackCoordinator;
 @property (nonatomic) UITextField *activeEditableField;
+// Identifies the active field for Nebula Remote, plus where to commit its text.
+@property (nonatomic, copy) NSString *activeEditableFieldID;
+@property (nonatomic) CGPoint activeEditablePoint;
+@property (nonatomic, weak) BrowserWebView *activeEditableWebView;
 
 - (void)commitEditableText:(NSString *)text
                    atPoint:(CGPoint)point
@@ -114,6 +118,17 @@
     hiddenField.returnKeyType = UIReturnKeyDone;
     [container addSubview:hiddenField];
     self.activeEditableField = hiddenField;
+    NSString *fieldID = [NSUUID UUID].UUIDString;
+    self.activeEditableFieldID = fieldID;
+    self.activeEditablePoint = point;
+    self.activeEditableWebView = webView;
+    [self.host browserPageActionCoordinatorActiveFieldDidChange:@{
+        @"id": fieldID,
+        @"title": fieldTitle ?: @"",
+        @"type": fieldType ?: @"text",
+        @"placeholder": placeholder ?: @"",
+        @"value": initialValue ?: @"",
+    }];
 
     __weak typeof(self) weakSelf = self;
     // Al salir del teclado se escribe en la pagina y se retira el campo.
@@ -127,6 +142,7 @@
             strongSelf.activeEditableField = nil;
             [strongSelf commitEditableText:field.text atPoint:point webView:webView submitForm:NO];
             [field removeFromSuperview];
+            [strongSelf clearActiveEditableFieldIDIfEqualTo:fieldID];
         }] forControlEvents:UIControlEventEditingDidEnd];
     }
 
@@ -134,6 +150,31 @@
     dispatch_async(dispatch_get_main_queue(), ^{
         [weakSelf.activeEditableField becomeFirstResponder];
     });
+}
+
+- (void)clearActiveEditableFieldIDIfEqualTo:(NSString *)fieldID {
+    if (![self.activeEditableFieldID isEqualToString:fieldID]) {
+        return; // a newer field already replaced it
+    }
+    self.activeEditableFieldID = nil;
+    [self.host browserPageActionCoordinatorActiveFieldDidChange:nil];
+}
+
+- (BOOL)commitRemoteText:(NSString *)text forFieldID:(NSString *)fieldID submitForm:(BOOL)submitForm {
+    UITextField *field = self.activeEditableField;
+    BrowserWebView *webView = self.activeEditableWebView;
+    if (field == nil || webView == nil || ![fieldID isEqualToString:self.activeEditableFieldID]) {
+        return NO;
+    }
+
+    // Detach first so the EditingDidEnd handler (fired by resigning) doesn't commit
+    // the TV-side text over it; this commit is the single write for the field.
+    self.activeEditableField = nil;
+    [self commitEditableText:text atPoint:self.activeEditablePoint webView:webView submitForm:submitForm];
+    [field resignFirstResponder];
+    [field removeFromSuperview];
+    [self clearActiveEditableFieldIDIfEqualTo:fieldID];
+    return YES;
 }
 
 - (void)commitEditableText:(NSString *)text

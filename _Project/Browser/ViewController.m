@@ -1276,8 +1276,15 @@ static UIColor *kTextColor(void) {
 }
 
 - (BOOL)remoteServer:(BrowserRemoteServer *)server submitFieldText:(NSString *)text fieldID:(NSString *)fieldID submitForm:(BOOL)submitForm {
-    NSLog(@"[Remote] field id=%@ submit=%d", fieldID, submitForm);
-    return NO;
+    return [self.pageActionCoordinator commitRemoteText:text forFieldID:fieldID submitForm:submitForm];
+}
+
+- (void)browserPageActionCoordinatorActiveFieldDidChange:(NSDictionary<NSString *, NSString *> *)field {
+    NSUInteger previousVersion = self.remoteServer.state.version;
+    [self.remoteServer.state updateField:field];
+    if (self.remoteServer.state.version != previousVersion) {
+        [self.remoteServer stateDidChange];
+    }
 }
 
 - (NSString *)remoteServerPageHTML:(BrowserRemoteServer *)server {
