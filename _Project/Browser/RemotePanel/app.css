@@ -92,6 +92,21 @@ label.check input, label.radio input { width: 20px; height: 20px; accent-color: 
 .list li.editing { flex-wrap: wrap; }
 .add-form { display: flex; flex-direction: column; gap: 8px; }
 
+/* Trackpad */
+.pad {
+  min-height: 260px; border-radius: 16px; border: 1px dashed var(--line);
+  background: radial-gradient(circle at 50% 40%, rgba(255,255,255,.06), rgba(0,0,0,.15));
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  color: var(--muted); font-size: 15px; padding: 16px; cursor: pointer;
+  touch-action: none; user-select: none; -webkit-user-select: none; outline: none;
+}
+.pad.locked { border-style: solid; border-color: var(--accent); cursor: none; color: var(--text); }
+.pad-status { font-size: 13px; color: var(--warn); }
+.pad-status.on { color: #30D158; }
+.pad-controls { align-items: center; flex-wrap: wrap; }
+.speed { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 180px; color: var(--muted); font-size: 14px; }
+.speed input { flex: 1; accent-color: var(--accent); }
+
 /* iPhone: one section at a time, section bar fixed at the bottom. */
 .panel { display: none; }
 .panel.active { display: flex; }
@@ -114,11 +129,12 @@ footer { text-align: center; color: #8a83a8; font-size: 13px; }
   .section-bar { display: none; }
   .sections {
     display: grid; gap: 16px; grid-template-columns: 1fr 1fr;
-    grid-template-areas: "write write" "tabs favorites" "tabs home";
+    grid-template-areas: "write trackpad" "tabs favorites" "tabs home";
     align-items: start;
   }
   .panel { display: flex; }
   #write { grid-area: write; }
+  #trackpad { grid-area: trackpad; }
   #tabs { grid-area: tabs; }
   #favorites { grid-area: favorites; }
   #home { grid-area: home; }

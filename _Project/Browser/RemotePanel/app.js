@@ -265,6 +265,155 @@ function renderHome() {
   document.querySelectorAll('input[name=launch]').forEach(function (radio) { radio.checked = radio.value === home.launch; });
 }
 
+// ---- Trackpad ----------------------------------------------------------------
+// Movement is accumulated and sent once per animation frame over /api/trackpad.
+
+var DESKTOP = window.matchMedia('(min-width: 900px)');
+var TOUCH = window.matchMedia('(pointer: coarse)').matches;
+var SPEED_KEY = 'nebula.trackpadSpeed';
+var pad = { socket: null, wanted: false, failures: 0, retry: null,
+            move: { x: 0, y: 0 }, scroll: { x: 0, y: 0 }, frame: false, clickTimer: null, lastTap: 0 };
+
+function padSpeed() { return parseFloat($('padSpeed').value) || (TOUCH ? 3 : 2); }
+
+function loadPadSpeed() {
+  var saved = null;
+  try { saved = localStorage.getItem(SPEED_KEY); } catch (e) {}
+  $('padSpeed').value = saved || (TOUCH ? '3' : '2');
+}
+
+function padStatus(connected) {
+  $('padStatus').textContent = connected ? 'Conectado' : 'Desconectado';
+  $('padStatus').className = connected ? 'pad-status on' : 'pad-status';
+}
+
+function padOpen() {
+  pad.wanted = true;
+  if (pad.socket) { return; }
+  var socket = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/api/trackpad');
+  pad.socket = socket;
+  socket.onopen = function () { pad.failures = 0; padStatus(true); };
+  socket.onclose = function () {
+    pad.socket = null;
+    padStatus(false);
+    if (!pad.wanted) { return; }
+    pad.failures++;
+    pad.retry = setTimeout(padOpen, Math.min(5000, 1000 * pad.failures));
+  };
+}
+
+function padClose() {
+  pad.wanted = false;
+  clearTimeout(pad.retry);
+  if (pad.socket) { pad.socket.close(1000); pad.socket = null; }
+  padStatus(false);
+}
+
+function padSend(message) {
+  if (pad.socket && pad.socket.readyState === WebSocket.OPEN) { pad.socket.send(JSON.stringify(message)); }
+}
+
+function padFlush() {
+  pad.frame = false;
+  if (pad.move.x || pad.move.y) { padSend({ t: 'm', dx: Math.round(pad.move.x), dy: Math.round(pad.move.y) }); }
+  if (pad.scroll.x || pad.scroll.y) { padSend({ t: 's', dx: Math.round(pad.scroll.x), dy: Math.round(pad.scroll.y) }); }
+  pad.move = { x: 0, y: 0 };
+  pad.scroll = { x: 0, y: 0 };
+}
+
+function padQueue(kind, dx, dy) {
+  var target = kind === 'm' ? pad.move : pad.scroll;
+  target.x += dx;
+  target.y += dy;
+  if (!pad.frame) { pad.frame = true; requestAnimationFrame(padFlush); }
+}
+
+function padClick() { padFlush(); padSend({ t: 'c' }); }
+function padDoubleClick() { padFlush(); padSend({ t: 'd' }); }
+
+// A single click waits (250 ms mouse, 300 ms touch = the double-tap window) so a
+// double click doesn't also send a single click.
+function padDeferredClick(delay) {
+  if (pad.clickTimer) { return; }
+  pad.clickTimer = setTimeout(function () { pad.clickTimer = null; padClick(); }, delay);
+}
+function padCancelClick() { clearTimeout(pad.clickTimer); pad.clickTimer = null; }
+
+function padLocked() { return document.pointerLockElement === $('pad'); }
+
+function setupPad() {
+  var area = $('pad');
+  loadPadSpeed();
+  $('padHint').textContent = TOUCH ? 'Arrastra para mover el cursor · toca para hacer clic · dos dedos para scroll'
+                                   : 'Clic para controlar la TV';
+  $('padSpeed').oninput = function () { try { localStorage.setItem(SPEED_KEY, $('padSpeed').value); } catch (e) {} };
+  $('padClick').onclick = padClick;
+  $('padDouble').onclick = padDoubleClick;
+
+  // Mac / desktop: pointer lock.
+  area.addEventListener('click', function () {
+    if (TOUCH) { return; }
+    if (!padLocked()) { area.requestPointerLock(); return; }
+    padDeferredClick(250);
+  });
+  area.addEventListener('dblclick', function () {
+    if (!padLocked()) { return; }
+    padCancelClick();
+    padDoubleClick();
+  });
+  document.addEventListener('mousemove', function (event) {
+    if (padLocked()) { padQueue('m', event.movementX * padSpeed(), event.movementY * padSpeed()); }
+  });
+  area.addEventListener('wheel', function (event) {
+    if (!padLocked()) { return; }
+    event.preventDefault();
+    padQueue('s', event.deltaX, event.deltaY);
+  }, { passive: false });
+  document.addEventListener('pointerlockchange', function () {
+    var locked = padLocked();
+    area.classList.toggle('locked', locked);
+    if (!TOUCH) { $('padHint').textContent = locked ? 'Controlando la TV · Esc para soltar' : 'Clic para controlar la TV'; }
+  });
+
+  // iPhone / touch: 1 finger moves, tap clicks, double tap double-clicks, 2 fingers scroll.
+  var touch = null;
+  function center(list) {
+    var x = 0, y = 0;
+    for (var i = 0; i < list.length; i++) { x += list[i].clientX; y += list[i].clientY; }
+    return { x: x / list.length, y: y / list.length };
+  }
+  area.addEventListener('touchstart', function (event) {
+    event.preventDefault();
+    var point = center(event.touches);
+    touch = { start: Date.now(), origin: point, last: point, fingers: event.touches.length, moved: false };
+  }, { passive: false });
+  area.addEventListener('touchmove', function (event) {
+    event.preventDefault();
+    if (!touch) { return; }
+    var point = center(event.touches);
+    var dx = point.x - touch.last.x;
+    var dy = point.y - touch.last.y;
+    touch.last = point;
+    touch.fingers = Math.max(touch.fingers, event.touches.length);
+    if (Math.abs(point.x - touch.origin.x) > 10 || Math.abs(point.y - touch.origin.y) > 10) { touch.moved = true; }
+    if (event.touches.length >= 2) { padQueue('s', -dx * 2, -dy * 2); }
+    else { padQueue('m', dx * padSpeed(), dy * padSpeed()); }
+  }, { passive: false });
+  area.addEventListener('touchend', function (event) {
+    event.preventDefault();
+    if (!touch || event.touches.length > 0) { return; }
+    var tap = !touch.moved && touch.fingers === 1 && Date.now() - touch.start < 200;
+    touch = null;
+    if (!tap) { return; }
+    var now = Date.now();
+    if (now - pad.lastTap < 300) { pad.lastTap = 0; padCancelClick(); padDoubleClick(); }
+    else { pad.lastTap = now; padDeferredClick(300); }
+  }, { passive: false });
+
+  window.addEventListener('pagehide', padClose);
+  if (DESKTOP.matches) { padOpen(); }
+}
+
 // ---- Estado ------------------------------------------------------------------
 
 function applyEnabledActions() {
@@ -301,6 +450,10 @@ function poll() {
 function showSection(name) {
   // Leaving the section closes any open favorite menu/editor so the list never stays frozen.
   if (favoritesBusy) { closeFavoriteEditors(); }
+  // On narrow screens the trackpad socket lives only while its section is shown.
+  if (!DESKTOP.matches) {
+    if (name === 'trackpad') { padOpen(); } else { padClose(); }
+  }
   document.querySelectorAll('#sectionBar button').forEach(function (node) {
     node.classList.toggle('active', node.getAttribute('data-section') === name);
   });
@@ -333,6 +486,7 @@ document.querySelectorAll('input[name=launch]').forEach(function (radio) {
 });
 
 applyEnabledActions();
+setupPad();
 
 // Bookmarklet/share window: send once and close; no long-poll (see v1 review).
 var params = new URLSearchParams(location.search);

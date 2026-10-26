@@ -37,6 +37,7 @@
 
   <nav id="sectionBar" class="section-bar">
     <button data-section="write" class="active">Escribir</button>
+    <button data-section="trackpad">Trackpad</button>
     <button data-section="tabs">Tabs <span id="tabCount" class="count"></span></button>
     <button data-section="favorites">Favoritos</button>
     <button data-section="home">Inicio</button>
@@ -51,6 +52,16 @@
         <button id="openTab" class="secondary">Abrir en tab nueva</button>
       </div>
       <div id="openToast" class="toast"></div>
+    </section>
+
+    <section id="trackpad" class="card panel">
+      <div class="panel-head"><h2>Trackpad</h2><span id="padStatus" class="pad-status">Desconectado</span></div>
+      <div id="pad" class="pad" tabindex="0"><span id="padHint">Clic para controlar la TV</span></div>
+      <div class="row pad-controls">
+        <label class="speed">Velocidad <input id="padSpeed" type="range" min="0.5" max="4" step="0.25"></label>
+        <button id="padClick" class="secondary small">Clic</button>
+        <button id="padDouble" class="secondary small">Doble clic</button>
+      </div>
     </section>
 
     <section id="tabs" class="card panel">
