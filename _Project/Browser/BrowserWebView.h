@@ -67,9 +67,22 @@ NS_ASSUME_NONNULL_BEGIN
 // freshness window are pruned before dispatch; dead frames no-op. Returns the
 // number of frames targeted.
 - (NSUInteger)evaluateJavaScriptOnRecentProbeFrames:(NSString * _Nonnull)javaScript;
+// On-demand subtitle capture for the native-player takeover: evaluates the
+// WebVTT extraction script in the document of the probe frame stored under
+// this frame key (page content world) and returns its subtitle/caption
+// tracks. Each dict either carries parsed cues ({label, mode, cues:[{s,e,t}]})
+// or, when no cues are loaded, the raw <track> srcs ({label, src}). The
+// completion fires exactly once on the main thread; a 1.5s watchdog, an
+// unknown/dead frame, or any failure completes with an empty array instead.
+// Never throws, and the cue arrays never enter the periodic probe reports.
+- (void)extractSubtitleTracksForFrameKey:(NSString * _Nonnull)frameKey
+                              completion:(void (^ _Nonnull)(NSArray<NSDictionary *> * _Nonnull subtitleTracks))completion;
 - (void)resetMediaProbeReports;
 // Popups the user script blocked ({url, timestamp} newest-last, capped).
 @property (nonatomic, readonly) NSArray<NSDictionary *> * _Nonnull blockedPopups;
+
++ (void)setInteractivePumpTimeoutActive:(BOOL)active;
++ (BOOL)interactivePumpTimeoutActive;
 
 + (nullable NSData *)cookieDataRepresentation;
 + (NSArray<NSHTTPCookie *> * _Nonnull)allCookies;

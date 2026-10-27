@@ -106,13 +106,13 @@ static int sBrowserPumpDepth = 0;
 // hang the main thread if the handler never arrives.
 // Returns NO immediately WITHOUT pumping when a pump is already active; callers
 // must degrade gracefully (nil/fallback) on NO. Otherwise returns *done.
-static BOOL BrowserPumpRunLoopUntil(BOOL *done, CFRunLoopRef runLoop) {
+static BOOL BrowserPumpRunLoopUntil(BOOL *done, CFRunLoopRef runLoop, CFTimeInterval timeout) {
     if (sBrowserPumpDepth > 0) {
         return NO;
     }
 
     sBrowserPumpDepth += 1;
-    CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 2.0;
+    CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + timeout;
     while (!*done) {
         CFAbsoluteTime remaining = deadline - CFAbsoluteTimeGetCurrent();
         if (remaining <= 0.0) {
@@ -125,6 +125,18 @@ static BOOL BrowserPumpRunLoopUntil(BOOL *done, CFRunLoopRef runLoop) {
     BOOL finished = *done ? YES : NO;
     sBrowserPumpDepth -= 1;
     return finished;
+}
+
+// Interactive degrade: one tap/hover on a JS-heavy page (ppv.st class) chains
+// several synchronous evals, each stalling the main thread up to the full
+// 2.0s window until the queue drains — the whole app feels dead. While the
+// user is interacting, the JS-eval pump cuts that window short; diagnostics
+// (BrowserMenuCoordinator) disarm it to get the full 2.0s eval windows back.
+// Main-thread only, like every pump caller.
+static BOOL sBrowserInteractivePumpTimeoutActive = YES;
+
+static CFTimeInterval BrowserSyncEvalPumpTimeout(void) {
+    return sBrowserInteractivePumpTimeoutActive ? 0.35 : 2.0;
 }
 
 static NSString *BrowserStringFromJavaScriptResult(id result) {
@@ -1564,10 +1576,25 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
         finished = YES;
         CFRunLoopStop(runLoop); // wake the pump immediately
     });
-    BOOL pumped = BrowserPumpRunLoopUntil(&finished, runLoop);
+    CFAbsoluteTime evalStart = CFAbsoluteTimeGetCurrent();
+    // Capture before pumping: a nonzero depth here means an outer pump owns
+    // the main thread, so the pump's NO is a nested rejection, not a timeout.
+    BOOL nestedPumpActive = sBrowserPumpDepth > 0;
+    BOOL pumped = BrowserPumpRunLoopUntil(&finished, runLoop, BrowserSyncEvalPumpTimeout());
     if (!pumped && !finished) {
         NSString *truncatedScript = script.length > 60 ? [script substringToIndex:60] : script;
-        NSLog(@"[SyncEval] nested-pump rejected script=%@", truncatedScript);
+        if (nestedPumpActive) {
+            NSLog(@"[SyncEval] nested-pump rejected script=%@", truncatedScript);
+        } else {
+            // Rate-limit: one input chain can produce several full-timeout evals
+            // back to back; at most one log line per 500ms.
+            CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+            static CFAbsoluteTime sLastSyncEvalTimeoutLog = 0.0;
+            if (now - sLastSyncEvalTimeoutLog >= 0.5) {
+                sLastSyncEvalTimeoutLog = now;
+                NSLog(@"[SyncEval] timeout after %.0fms script=%@", (now - evalStart) * 1000.0, truncatedScript);
+            }
+        }
         return nil;
     }
 
@@ -2170,7 +2197,8 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
 // the embed's probe script is silent (the native player owns playback), and a
 // WKFrameInfo remains valid to target through the document reload the embed
 // performs, so presentation-candidate probe staleness must not gate this.
-// Evaluations on since-dead frames no-op harmlessly with a nil completion.
+// Evaluations on since-dead frames no-op harmlessly; the completion only logs
+// the per-frame error (if any) so in-frame SyntaxErrors are not silent.
 // Returns the number of frames targeted. Main thread only.
 - (NSUInteger)evaluateJavaScriptOnRecentProbeFrames:(NSString *)javaScript {
     NSLog(@"[NativeVideoPlayer] frame-eval entry js=%lu frames=%lu runtime=%@ webviewSelf=%p", (unsigned long)javaScript.length, (unsigned long)_frameInfoByFrameKey.count, self.runtimeWebView == nil ? @"NIL" : @"set", self);
@@ -2207,10 +2235,143 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
 
     NSUInteger dispatchedFrames = 0;
     for (id frameInfo in [_frameInfoByFrameKey allValues]) {
-        ((void (*)(id, SEL, id, id, id, id))objc_msgSend)(self.runtimeWebView, selector, javaScript, frameInfo, pageWorld, nil);
+        ((void (*)(id, SEL, id, id, id, void (^)(id, id)))objc_msgSend)(self.runtimeWebView, selector, javaScript, frameInfo, pageWorld, ^(id result, id error) {
+            if (error != nil) {
+                NSLog(@"[NativeVideoPlayer] frame-eval error=%@", error);
+            }
+        });
         dispatchedFrames++;
     }
     return dispatchedFrames;
+}
+
+// WebVTT subtitle extraction, evaluated on-demand at native takeover inside
+// one probe frame's document (page content world). Reads the largest <video>'s
+// loaded subtitle/caption TextTrack cues; when none are loaded, falls back to
+// listing the page's <track kind="subtitles|captions"> srcs so the app can
+// fetch the VTT itself. Returns a JSON string, never throws from JS.
+static NSString *const kBrowserSubtitleTrackExtractionScript =
+    @"(() => {"
+    "  try {"
+    "    var vids = Array.from(document.querySelectorAll('video'));"
+    "    if (!vids.length) return '[]';"
+    "    var v = vids.sort((a,b)=>(b.clientWidth*b.clientHeight)-(a.clientWidth*a.clientHeight))[0];"
+    "    var out = [];"
+    "    var seen = {};"
+    "    var tracks = [];"
+    "    try { tracks = Array.from(v.textTracks || []); } catch(e){}"
+    "    tracks.forEach(function(t){"
+    "      try {"
+    "        if (!t) return;"
+    "        var k = String(t.kind||'');"
+    "        if (k !== 'subtitles' && k !== 'captions') return;"
+    "        var cues = [];"
+    "        var cl = t.cues || null;"
+    "        var n = cl ? Math.min(cl.length, 3000) : 0;"
+    "        for (var i=0;i<n;i++){"
+    "          var c = cl[i];"
+    "          if (!c) continue;"
+    "          var txt = String(c.text||'').replace(/<[^>]*>/g,'').replace(/\\{[^}]*\\}/g,'').trim();"
+    "          if (!txt) continue;"
+    "          cues.push({ s: Math.round(c.startTime*1000), e: Math.round(c.endTime*1000), t: txt });"
+    "        }"
+    "        var key = (t.label||'')+'|'+k+'|'+cues.length;"
+    "        if (cues.length && !seen[key]) { seen[key]=1; out.push({ label: String(t.label||t.language||'subtitles'), mode: String(t.mode||''), cues: cues }); }"
+    "      } catch(e){}"
+    "    });"
+    "    if (!out.length) {"
+    "      /* no loaded cues: expose <track> srcs so the app can fetch the VTT itself */"
+    "      var srcs = [];"
+    "      try {"
+    "        Array.from(document.querySelectorAll('track')).forEach(function(tr){"
+    "          var k = String(tr.kind||''); if (k!=='subtitles'&&k!=='captions') return;"
+    "          if (tr.src) srcs.push({ label: String(tr.label||tr.srclang||'subtitles'), src: String(tr.src) });"
+    "        });"
+    "      } catch(e){}"
+    "      out = srcs;"
+    "    }"
+    "    if (!out.length) {"
+    "      return JSON.stringify([{diag:'vids='+vids.length+',tt='+(v?v.textTracks.length:-1)+',trackEls='+document.querySelectorAll('track').length+',title='+document.title.slice(0,20)}]);"
+    "    }"
+    "    return JSON.stringify(out);"
+    "  } catch(e) { return '[]'; }"
+    "})()";
+
+// Evaluate the extraction script directly in the stored WKFrameInfo document of
+// one probe frame (the same runtime-targeted
+// -evaluateJavaScript:inFrame:inContentWorld: path as
+// -evaluateJavaScriptOnRecentProbeFrames:, page content world). On-demand only:
+// never runs on the probe cadence. A 1.5s watchdog guarantees the completion
+// fires exactly once on the main thread (empty array on frame loss, missing
+// API, timeout, or parse failure) so the native takeover is never delayed
+// beyond it.
+- (void)extractSubtitleTracksForFrameKey:(NSString *)frameKey
+                              completion:(void (^)(NSArray<NSDictionary *> *subtitleTracks))completion {
+    __block BOOL delivered = NO;
+    void (^deliver)(NSArray<NSDictionary *> *) = ^(NSArray<NSDictionary *> *subtitleTracks) {
+        if (delivered) {
+            return; // watchdog vs JS completion: exactly once
+        }
+        delivered = YES;
+        NSArray<NSDictionary *> *tracks = [subtitleTracks isKindOfClass:[NSArray class]] ? subtitleTracks : @[];
+        NSUInteger cueCount = 0;
+        for (id track in tracks) {
+            if ([track isKindOfClass:[NSDictionary class]] && [((NSDictionary *)track)[@"cues"] isKindOfClass:[NSArray class]]) {
+                cueCount += [(NSArray *)((NSDictionary *)track)[@"cues"] count];
+            }
+        }
+        NSLog(@"[Subs] frame=%@ tracks=%lu cues=%lu", frameKey ?: @"", (unsigned long)tracks.count, (unsigned long)cueCount);
+        if (completion != nil) {
+            completion(tracks);
+        }
+    };
+    id frameInfo = frameKey.length > 0 ? _frameInfoByFrameKey[frameKey] : nil;
+    if (frameInfo == nil || self.runtimeWebView == nil) {
+        deliver(@[]);
+        return;
+    }
+    SEL selector = NSSelectorFromString(@"evaluateJavaScript:inFrame:inContentWorld:completionHandler:");
+    id pageWorld = nil;
+    Class contentWorldClass = NSClassFromString(@"WKContentWorld");
+    SEL pageWorldSelector = NSSelectorFromString(@"pageWorld");
+    if (contentWorldClass != nil && [contentWorldClass respondsToSelector:pageWorldSelector]) {
+        pageWorld = ((id (*)(id, SEL))objc_msgSend)((id)contentWorldClass, pageWorldSelector);
+    }
+    if (![self.runtimeWebView respondsToSelector:selector] || pageWorld == nil) {
+        deliver(@[]);
+        return;
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        deliver(@[]);
+    });
+    ((void (*)(id, SEL, id, id, id, void (^)(id, id)))objc_msgSend)(self.runtimeWebView, selector,
+                                                                    kBrowserSubtitleTrackExtractionScript, frameInfo, pageWorld,
+                                                                    ^(id result, id error) {
+        // WebKit delivers this on its own queue: parse off-main, then hop to
+        // main so deliver()'s once-only flag has a single writer.
+        NSLog(@"[Subs] raw=%@", [result isKindOfClass:NSString.class] ? [(NSString *)result substringToIndex:MIN((NSUInteger)140, [(NSString *)result length])] : NSStringFromClass([result class]));
+        NSLog(@"[Subs] err=%@", error ?: @"(none)");
+        NSMutableArray<NSDictionary *> *tracks = [NSMutableArray array];
+        if ([result isKindOfClass:[NSString class]]) {
+            NSData *jsonData = [(NSString *)result dataUsingEncoding:NSUTF8StringEncoding];
+            id parsed = jsonData != nil ? [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:NULL] : nil;
+            if ([parsed isKindOfClass:[NSArray class]]) {
+                for (id track in (NSArray *)parsed) {
+                    if (![track isKindOfClass:[NSDictionary class]]) {
+                        continue;
+                    }
+                    BOOL hasCues = [((NSDictionary *)track)[@"cues"] isKindOfClass:[NSArray class]];
+                    BOOL hasSrc = [((NSDictionary *)track)[@"src"] isKindOfClass:[NSString class]];
+                    if (hasCues || hasSrc) {
+                        [tracks addObject:track];
+                    }
+                }
+            }
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            deliver(tracks);
+        });
+    });
 }
 
 - (void)resetMediaProbeReports {
@@ -2423,6 +2584,15 @@ windowFeatures:(id)windowFeatures {
     return nil;
 }
 
++ (void)setInteractivePumpTimeoutActive:(BOOL)active {
+    // Main thread only — same contract as every pump caller.
+    sBrowserInteractivePumpTimeoutActive = active;
+}
+
++ (BOOL)interactivePumpTimeoutActive {
+    return sBrowserInteractivePumpTimeoutActive;
+}
+
 + (id)defaultWebsiteDataStore {
     BrowserEnsureWebKitRuntimeLoaded();
     Class dataStoreClass = NSClassFromString(kBrowserWebsiteDataStoreClassName);
@@ -2457,7 +2627,8 @@ windowFeatures:(id)windowFeatures {
         finished = YES;
         CFRunLoopStop(runLoop);
     });
-    BOOL pumped = BrowserPumpRunLoopUntil(&finished, runLoop);
+    // Cookie I/O is not on the interactive hot path: full window.
+    BOOL pumped = BrowserPumpRunLoopUntil(&finished, runLoop, 2.0);
     if (!pumped && !finished) {
         return NSHTTPCookieStorage.sharedHTTPCookieStorage.cookies ?: @[];
     }
@@ -2506,7 +2677,7 @@ windowFeatures:(id)windowFeatures {
     }
     // Nested rejection behaves like the timeout path: proceed, handlers land
     // inside the outer pump.
-    (void)BrowserPumpRunLoopUntil(&finished, runLoop);
+    (void)BrowserPumpRunLoopUntil(&finished, runLoop, 2.0);
 }
 
 + (NSSet<NSString *> *)allWebsiteDataTypes {

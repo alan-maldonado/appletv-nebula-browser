@@ -58,6 +58,425 @@ static NSDictionary<NSString *, NSString *> *BrowserPlainPlaybackHeaderFields(NS
     return clean;
 }
 
+// ============================================================================
+// Page-captured WebVTT subtitle overlay (kisskh & generic <track> sites).
+// Rendered over the AVPlayerViewController's contentOverlayView: picks one
+// captured track, shows the cue covering the playhead time (when the cues
+// came as raw <track> srcs, fetches and parses the VTT/SRT first), and never
+// intercepts touches.
+// ============================================================================
+
+// One parsed subtitle cue, times in seconds.
+@interface BrowserSubtitleCue : NSObject
+@property (nonatomic, assign) NSTimeInterval cueStart;
+@property (nonatomic, assign) NSTimeInterval cueEnd;
+@property (nonatomic, copy) NSString *text;
+@end
+
+@implementation BrowserSubtitleCue
+@end
+
+static NSUInteger const kBrowserSubtitleMaxCues = 3000;
+
+// "00:01:02.500" / "01:02,500" / "62.5" -> seconds. WebVTT omits hours when
+// zero and allows dot or comma decimals; SRT is always HH:MM:SS,mmm. Any
+// non-numeric token (including cue-position settings, which the caller's
+// token charset already excludes) is rejected.
+static BOOL BrowserParseSubtitleTimestamp(NSString *rawToken, NSTimeInterval *outSeconds) {
+    NSString *token = [rawToken stringByReplacingOccurrencesOfString:@"," withString:@"."];
+    if (token.length == 0) {
+        return NO;
+    }
+    NSArray<NSString *> *parts = [token componentsSeparatedByString:@":"];
+    if (parts.count < 2 || parts.count > 3) {
+        return NO;
+    }
+    NSTimeInterval seconds = 0.0;
+    for (NSUInteger index = 0; index < parts.count; index++) {
+        NSString *part = parts[index];
+        BOOL isLast = index + 1 == parts.count;
+        NSString *allowed = isLast ? @"0123456789." : @"0123456789";
+        if (part.length == 0
+            || [part rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:allowed].invertedSet].location != NSNotFound) {
+            return NO;
+        }
+        seconds = seconds * 60.0 + part.doubleValue;
+    }
+    if (seconds < 0.0) {
+        return NO;
+    }
+    if (outSeconds != NULL) {
+        *outSeconds = seconds;
+    }
+    return YES;
+}
+
+static NSRegularExpression *BrowserSubtitleTimingRegex(void) {
+    static NSRegularExpression *timingRegex = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        timingRegex = [NSRegularExpression regularExpressionWithPattern:@"([0-9][0-9:,.]*)[ \t]*-->[ \t]*([0-9][0-9:,.]*)" options:0 error:NULL];
+    });
+    return timingRegex;
+}
+
+static NSString *BrowserCleanSubtitleCueText(NSString *rawText) {
+    static dispatch_once_t onceToken;
+    static NSRegularExpression *tagRegex = nil;
+    static NSRegularExpression *braceRegex = nil;
+    dispatch_once(&onceToken, ^{
+        tagRegex = [NSRegularExpression regularExpressionWithPattern:@"<[^>]*>" options:0 error:NULL];
+        braceRegex = [NSRegularExpression regularExpressionWithPattern:@"\\{[^}]*\\}" options:0 error:NULL];
+    });
+    NSString *cleaned = [tagRegex stringByReplacingMatchesInString:rawText options:0 range:NSMakeRange(0, rawText.length) withTemplate:@""];
+    cleaned = [braceRegex stringByReplacingMatchesInString:cleaned options:0 range:NSMakeRange(0, cleaned.length) withTemplate:@""];
+    return [cleaned stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+}
+
+// WebVTT and SRT share one parser: the WEBVTT header is optional, NOTE /
+// STYLE / REGION blocks (until their blank line) are skipped, timing lines
+// accept both timestamp dialects, the remainder of a cue block is the text
+// (multi-line cues joined), and the cue count is capped.
+static NSArray<BrowserSubtitleCue *> *BrowserParseSubtitleText(NSString *text) {
+    if (![text isKindOfClass:[NSString class]] || text.length == 0) {
+        return @[];
+    }
+    NSString *normalized = [text stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"];
+    normalized = [normalized stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"];
+    if ([normalized hasPrefix:@"\uFEFF"]) {
+        normalized = [normalized substringFromIndex:1];
+    }
+    NSMutableArray<BrowserSubtitleCue *> *cues = [NSMutableArray array];
+    NSMutableString *pendingText = [NSMutableString string];
+    __block NSTimeInterval pendingStart = 0.0;
+    __block NSTimeInterval pendingEnd = 0.0;
+    BOOL inCue = NO;
+    BOOL inSkipBlock = NO;
+    void (^commitCue)(void) = ^{
+        if (pendingStart <= pendingEnd) {
+            NSString *cueText = BrowserCleanSubtitleCueText(pendingText);
+            if (cueText.length > 0 && cues.count < kBrowserSubtitleMaxCues) {
+                BrowserSubtitleCue *cue = [BrowserSubtitleCue new];
+                cue.cueStart = pendingStart;
+                cue.cueEnd = pendingEnd;
+                cue.text = cueText;
+                [cues addObject:cue];
+            }
+        }
+        [pendingText setString:@""];
+    };
+    for (NSString *line in [normalized componentsSeparatedByString:@"\n"]) {
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (!inCue) {
+            if ([trimmed hasPrefix:@"WEBVTT"]) {
+                continue;
+            }
+            if ([trimmed hasPrefix:@"NOTE"] || [trimmed hasPrefix:@"STYLE"] || [trimmed hasPrefix:@"REGION"]) {
+                inSkipBlock = YES;
+                continue;
+            }
+            if (inSkipBlock) {
+                if (trimmed.length == 0) {
+                    inSkipBlock = NO;
+                }
+                continue;
+            }
+            NSTextCheckingResult *match = [BrowserSubtitleTimingRegex() firstMatchInString:trimmed options:0 range:NSMakeRange(0, trimmed.length)];
+            if (match != nil && match.numberOfRanges == 3) {
+                NSTimeInterval start = 0.0;
+                NSTimeInterval end = 0.0;
+                if (BrowserParseSubtitleTimestamp([trimmed substringWithRange:[match rangeAtIndex:1]], &start)
+                    && BrowserParseSubtitleTimestamp([trimmed substringWithRange:[match rangeAtIndex:2]], &end)) {
+                    inCue = YES;
+                    pendingStart = start;
+                    pendingEnd = end;
+                    [pendingText setString:@""];
+                }
+            }
+            // SRT sequence numbers / VTT cue ids and any other line: ignored.
+            continue;
+        }
+        if (trimmed.length == 0) {
+            commitCue();
+            inCue = NO;
+        } else {
+            if (pendingText.length > 0) {
+                [pendingText appendString:@"\n"];
+            }
+            [pendingText appendString:trimmed];
+        }
+        if (cues.count >= kBrowserSubtitleMaxCues) {
+            break;
+        }
+    }
+    if (inCue && cues.count < kBrowserSubtitleMaxCues) {
+        commitCue(); // file without a trailing blank line
+    }
+    [cues sortUsingComparator:^NSComparisonResult(BrowserSubtitleCue *a, BrowserSubtitleCue *b) {
+        return a.cueStart < b.cueStart ? NSOrderedAscending : (a.cueStart > b.cueStart ? NSOrderedDescending : NSOrderedSame);
+    }];
+    return cues;
+}
+
+// JS-captured cue dicts ({s, e, t} times in ms, text already tag-stripped)
+// -> sorted cue models.
+static NSArray<BrowserSubtitleCue *> *BrowserSubtitleCuesFromDictionaries(NSArray<NSDictionary *> *cueDictionaries) {
+    if (![cueDictionaries isKindOfClass:[NSArray class]]) {
+        return @[];
+    }
+    NSMutableArray<BrowserSubtitleCue *> *cues = [NSMutableArray array];
+    for (id cueDictionary in cueDictionaries) {
+        if (cues.count >= kBrowserSubtitleMaxCues) {
+            break;
+        }
+        if (![cueDictionary isKindOfClass:[NSDictionary class]]) {
+            continue;
+        }
+        id startValue = ((NSDictionary *)cueDictionary)[@"s"];
+        id endValue = ((NSDictionary *)cueDictionary)[@"e"];
+        id textValue = ((NSDictionary *)cueDictionary)[@"t"];
+        if (![startValue respondsToSelector:@selector(doubleValue)]
+            || ![endValue respondsToSelector:@selector(doubleValue)]
+            || ![textValue isKindOfClass:[NSString class]]
+            || [(NSString *)textValue length] == 0) {
+            continue;
+        }
+        BrowserSubtitleCue *cue = [BrowserSubtitleCue new];
+        cue.cueStart = [startValue doubleValue] / 1000.0;
+        cue.cueEnd = [endValue doubleValue] / 1000.0;
+        cue.text = textValue;
+        [cues addObject:cue];
+    }
+    [cues sortUsingComparator:^NSComparisonResult(BrowserSubtitleCue *a, BrowserSubtitleCue *b) {
+        return a.cueStart < b.cueStart ? NSOrderedAscending : (a.cueStart > b.cueStart ? NSOrderedDescending : NSOrderedSame);
+    }];
+    return cues;
+}
+
+@interface BrowserSubtitleOverlayView : UIView
+
+// requestHeaders: the media-request header policy (UA + Referer, no Origin)
+// used for raw <track> src fetches.
+- (instancetype)initWithSubtitleTracks:(NSArray<NSDictionary *> *)subtitleTracks
+                                player:(nullable AVPlayer *)player
+                        requestHeaders:(nullable NSDictionary<NSString *, NSString *> *)requestHeaders NS_DESIGNATED_INITIALIZER;
+- (void)stopTimeObserving;
+
+- (instancetype)initWithFrame:(CGRect)frame NS_UNAVAILABLE;
+- (instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE;
+
+@end
+
+@interface BrowserSubtitleOverlayView () <NSURLSessionDataDelegate>
+
+@property (nonatomic, strong) UILabel *cueLabel;
+@property (nonatomic, copy) NSArray<BrowserSubtitleCue *> *cues;
+@property (nonatomic, copy) NSString *appliedCueText; // state guard: label only relayouts on text change
+@property (nonatomic, strong) id timeObserver;
+@property (nonatomic, weak) AVPlayer *observedPlayer;
+@property (nonatomic, copy) NSDictionary<NSString *, NSString *> *requestHeaders;
+@property (nonatomic, strong) NSURLSession *fetchSession;
+
+@end
+
+@implementation BrowserSubtitleOverlayView
+
+- (instancetype)initWithSubtitleTracks:(NSArray<NSDictionary *> *)subtitleTracks
+                                player:(AVPlayer *)player
+                        requestHeaders:(NSDictionary<NSString *, NSString *> *)requestHeaders {
+    self = [super initWithFrame:CGRectZero];
+    if (self) {
+        _requestHeaders = [requestHeaders copy] ?: @{};
+        self.userInteractionEnabled = NO;
+
+        _cueLabel = [UILabel new];
+        _cueLabel.numberOfLines = 3;
+        _cueLabel.font = [UIFont boldSystemFontOfSize:26.0];
+        _cueLabel.textColor = UIColor.whiteColor;
+        _cueLabel.textAlignment = NSTextAlignmentCenter;
+        // Effectively none, but a nearly-invisible backdrop measurably improves
+        // readability over bright video.
+        _cueLabel.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.004];
+        _cueLabel.layer.shadowColor = UIColor.blackColor.CGColor;
+        _cueLabel.layer.shadowOpacity = 1.0;
+        _cueLabel.layer.shadowOffset = CGSizeMake(1.0, -1.0);
+        _cueLabel.text = @"";
+        [self addSubview:_cueLabel];
+
+        // Best track: first mode == "showing", else first with cues, else first.
+        NSDictionary *track = nil;
+        NSDictionary *firstWithCues = nil;
+        NSDictionary *firstValid = nil;
+        for (id candidate in subtitleTracks) {
+            if (![candidate isKindOfClass:[NSDictionary class]]) {
+                continue;
+            }
+            if (firstValid == nil) {
+                firstValid = candidate;
+            }
+            NSString *mode = [candidate[@"mode"] isKindOfClass:[NSString class]] ? candidate[@"mode"] : @"";
+            if ([mode isEqualToString:@"showing"]) {
+                track = candidate;
+                break;
+            }
+            NSArray *cueDictionaries = [candidate[@"cues"] isKindOfClass:[NSArray class]] ? candidate[@"cues"] : nil;
+            if (firstWithCues == nil && cueDictionaries.count > 0) {
+                firstWithCues = candidate;
+            }
+        }
+        if (track == nil) {
+            track = firstWithCues ?: firstValid;
+        }
+
+        NSArray *cueDictionaries = [track[@"cues"] isKindOfClass:[NSArray class]] ? track[@"cues"] : nil;
+        NSString *src = [track[@"src"] isKindOfClass:[NSString class]] ? track[@"src"] : nil;
+        if (cueDictionaries.count > 0) {
+            _cues = BrowserSubtitleCuesFromDictionaries(cueDictionaries);
+        } else if (src.length > 0) {
+            _cues = @[]; // applied when the fetch lands
+            [self fetchSubtitleTextFromSrc:src];
+        } else {
+            _cues = @[];
+        }
+
+        _observedPlayer = player;
+        if (player != nil) {
+            __weak typeof(self) weakSelf = self; // weak proxy: the player owns the block
+            _timeObserver = [player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(0.25, NSEC_PER_SEC)
+                                                                 queue:dispatch_get_main_queue()
+                                                           usingBlock:^(CMTime time) {
+                [weakSelf cueTimeChanged:CMTimeGetSeconds(time)];
+            }];
+        }
+    }
+    return self;
+}
+
+- (void)fetchSubtitleTextFromSrc:(NSString *)src {
+    NSURL *URL = [NSURL URLWithString:src];
+    if (URL == nil) {
+        return;
+    }
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:URL];
+    request.timeoutInterval = 10.0;
+    [self applyRequestHeadersToRequest:request];
+    NSURLSessionConfiguration *configuration = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+    configuration.timeoutIntervalForRequest = 10.0;
+    self.fetchSession = [NSURLSession sessionWithConfiguration:configuration delegate:self delegateQueue:nil];
+    __weak typeof(self) weakSelf = self;
+    [[self.fetchSession dataTaskWithRequest:request completionHandler:^(NSData *data, __unused NSURLResponse *response, __unused NSError *error) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (strongSelf == nil) {
+            return;
+        }
+        NSString *text = nil; // delegate queue: parse off-main
+        if (data.length > 0) {
+            text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]
+                ?: [[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding];
+        }
+        NSArray<BrowserSubtitleCue *> *cues = BrowserParseSubtitleText(text);
+        NSLog(@"[Subs] fetched src=%@ cues=%lu", URL.lastPathComponent ?: @"", (unsigned long)cues.count);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            strongSelf.cues = cues; // applied by the next periodic tick
+        });
+        [strongSelf.fetchSession finishTasksAndInvalidate];
+    }] resume];
+}
+
+// NSURLSession strips custom header fields on redirect requests: rebuild the
+// followed request with the same media policy (UA + Referer, no Origin).
+- (void)applyRequestHeadersToRequest:(NSMutableURLRequest *)request {
+    [self.requestHeaders enumerateKeysAndObjectsUsingBlock:^(NSString *key, NSString *value, __unused BOOL *stop) {
+        [request setValue:value forHTTPHeaderField:key];
+    }];
+}
+
+- (void)URLSession:(__unused NSURLSession *)session
+              task:(__unused NSURLSessionTask *)task
+willPerformHTTPRedirection:(__unused NSHTTPURLResponse *)response
+        newRequest:(NSURLRequest *)newRequest
+ completionHandler:(void (^)(NSURLRequest *_Nullable))completionHandler {
+    NSMutableURLRequest *request = [newRequest mutableCopy];
+    [self applyRequestHeadersToRequest:request];
+    completionHandler(request);
+}
+
+- (void)cueTimeChanged:(NSTimeInterval)time {
+    if (self.cues.count == 0) {
+        return;
+    }
+    NSString *text = [self cueTextAtTime:time];
+    if (self.appliedCueText != nil && [self.appliedCueText isEqualToString:text]) {
+        return; // no text change: skip the label's layout churn
+    }
+    self.appliedCueText = text;
+    self.cueLabel.text = text;
+    [self setNeedsLayout];
+}
+
+// Cues are start-sorted: binary-search the first cue starting after time, then
+// walk back a few to catch a long cue still on screen.
+- (NSString *)cueTextAtTime:(NSTimeInterval)time {
+    NSArray<BrowserSubtitleCue *> *cues = self.cues;
+    NSUInteger low = 0;
+    NSUInteger high = cues.count;
+    while (low < high) {
+        NSUInteger mid = (low + high) / 2;
+        if (cues[mid].cueStart <= time) {
+            low = mid + 1;
+        } else {
+            high = mid;
+        }
+    }
+    NSUInteger index = low;
+    NSUInteger scanned = 0;
+    while (index > 0 && scanned < 8) {
+        index--;
+        BrowserSubtitleCue *cue = cues[index];
+        if (cue.cueStart <= time && time <= cue.cueEnd) {
+            return cue.text;
+        }
+        scanned++;
+    }
+    return @"";
+}
+
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat width = self.bounds.size.width;
+    CGFloat height = self.bounds.size.height;
+    if (width <= 0.0 || height <= 0.0) {
+        return;
+    }
+    CGFloat labelWidth = width * 0.86;
+    self.cueLabel.preferredMaxLayoutWidth = labelWidth;
+    CGSize fitting = [self.cueLabel sizeThatFits:CGSizeMake(labelWidth, CGFLOAT_MAX)];
+    CGFloat lineHeight = ceil(self.cueLabel.font.lineHeight);
+    CGFloat labelHeight = MIN(MAX(ceil(fitting.height), lineHeight), lineHeight * (CGFloat)self.cueLabel.numberOfLines + 4.0);
+    CGFloat labelY = height - height * 0.07 - labelHeight;
+    self.cueLabel.frame = CGRectMake((width - labelWidth) / 2.0, labelY, labelWidth, labelHeight);
+}
+
+// The overlay is cue paint only: never steal touches/focus from the player.
+- (UIView *)hitTest:(CGPoint)point withEvent:(__unused UIEvent *)event {
+    (void)point;
+    return nil;
+}
+
+- (void)stopTimeObserving {
+    if (self.timeObserver != nil) {
+        [self.observedPlayer removeTimeObserver:self.timeObserver];
+        self.timeObserver = nil;
+    }
+}
+
+- (void)dealloc {
+    [self stopTimeObserving];
+    [_fetchSession invalidateAndCancel];
+}
+
+@end
+
 @interface BrowserNativeVideoPlayerViewController ()
 
 @property (nonatomic, strong) NSURL *videoURL;
@@ -98,6 +517,9 @@ static NSDictionary<NSString *, NSString *> *BrowserPlainPlaybackHeaderFields(NS
 @property (nonatomic, strong) UIProgressView *positionHUDProgress;
 @property (nonatomic, strong) NSTimer *positionHUDHideTimer;
 @property (nonatomic, strong) id periodicTimeObserver;
+
+// Page-captured WebVTT subtitle overlay (nil when subtitleTracks is empty).
+@property (nonatomic, strong) BrowserSubtitleOverlayView *subtitleOverlayView;
 
 // Resume-where-you-left-off support.
 @property (nonatomic, assign) BOOL didAttemptResume;
@@ -247,6 +669,20 @@ static NSDictionary<NSString *, NSString *> *BrowserPlainPlaybackHeaderFields(NS
                                                  name:AVPlayerItemNewErrorLogEntryNotification
                                                object:self.player.currentItem];
 
+    // Page-captured WebVTT subtitles (kisskh-family sites attach <track>
+    // TextTracks the native takeover would otherwise lose): render cues
+    // time-synced over the video. Nil/empty subtitleTracks: no overlay,
+    // player behavior identical.
+    if (self.subtitleTracks.count > 0) {
+        self.subtitleOverlayView = [[BrowserSubtitleOverlayView alloc] initWithSubtitleTracks:self.subtitleTracks
+                                                                                       player:self.player
+                                                                               requestHeaders:BrowserPlainPlaybackHeaderFields(self.requestHeaders)];
+        self.subtitleOverlayView.frame = self.contentOverlayView.bounds;
+        self.subtitleOverlayView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [self.contentOverlayView addSubview:self.subtitleOverlayView];
+        [self log:@"subtitle overlay tracks=%lu", (unsigned long)self.subtitleTracks.count];
+    }
+
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(handleFocusUpdate:)
                                                  name:UIFocusDidUpdateNotification
@@ -312,10 +748,22 @@ static NSDictionary<NSString *, NSString *> *BrowserPlainPlaybackHeaderFields(NS
     [self.player play];
 }
 
+// contentOverlayView still has zero bounds at viewDidLoad, and autoresizing a
+// zero frame never grows it: keep the subtitle overlay pinned to the overlay.
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    if (self.subtitleOverlayView != nil && !CGRectEqualToRect(self.subtitleOverlayView.frame, self.contentOverlayView.bounds)) {
+        self.subtitleOverlayView.frame = self.contentOverlayView.bounds;
+    }
+}
+
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
     NSLog(@"%@ viewWillDisappear", kBrowserNativePlayerInputLogPrefix);
     [self log:@"viewWillDisappear pause"];
+    [self.subtitleOverlayView stopTimeObserving];
+    [self.subtitleOverlayView removeFromSuperview];
+    self.subtitleOverlayView = nil;
     [self saveResumePosition];
     [self stopScanTimer];
     self.scanRate = 1.0f;
@@ -325,6 +773,7 @@ static NSDictionary<NSString *, NSString *> *BrowserPlainPlaybackHeaderFields(NS
 }
 
 - (void)dealloc {
+    [_subtitleOverlayView stopTimeObserving];
     if (self.periodicTimeObserver != nil) {
         [self.player removeTimeObserver:self.periodicTimeObserver];
     }

@@ -22,6 +22,16 @@ static BOOL const kBrowserYouTubeNativeExtractionEnabled = NO;
 // restore on dismissal runs regardless of this flag.
 @property (nonatomic) BOOL pageMediaPausedForNativePlayer;
 
+// Shared presentation tail. subtitleFrameKey: the probe-frame key of the
+// report that selected the video; when set, page subtitles are captured
+// on-demand for that frame before the player is presented.
+- (void)forcePresentNativeVideoPlayerForURL:(NSURL *)URL
+                                      title:(NSString *)title
+                             requestHeaders:(NSDictionary<NSString *, NSString *> *)requestHeaders
+                                    cookies:(NSArray<NSHTTPCookie *> *)cookies
+                  candidateMasterPlaylistURLs:(NSArray<NSURL *> *)candidateMasterPlaylistURLs
+                            subtitleFrameKey:(NSString *)subtitleFrameKey;
+
 @end
 
 @implementation BrowserVideoPlaybackCoordinator
@@ -283,9 +293,20 @@ static BOOL const kBrowserYouTubeNativeExtractionEnabled = NO;
         NSString *pageURLString = [candidate[@"pageURL"] isKindOfClass:[NSString class]] ? candidate[@"pageURL"] : nil;
         NSDictionary<NSString *, NSString *> *requestHeaders = [self browserHeadersForPlaylistURL:videoURL
                                                                         videoInfo:(pageURLString.length > 0 ? @{@"pageURL": pageURLString} : @{})];
-        // Explicit user request: bypasses the Full Screen Player preference,
-        // and pauses the page's own media via the force-present path.
-        [self forcePresentNativeVideoPlayerForURL:videoURL title:title requestHeaders:requestHeaders cookies:nil candidateMasterPlaylistURLs:candidateMasterPlaylistURLs];
+        // Subtitle capture key: this report's frame in the web view's stored
+        // frame-info table (the same host+path key format BrowserWebView uses
+        // to stamp probes/frameInfos). Explicit user request: bypasses the Full
+        // Screen Player preference, and pauses the page's own media via the
+        // force-present path; the presentation itself waits on the (watchdog-
+        // capped at 1.5s) on-demand subtitle extraction for this frame.
+        NSString *subtitleFrameKey = nil;
+        if (pageURLString.length > 0) {
+            NSURL *probePageURL = [NSURL URLWithString:pageURLString];
+            subtitleFrameKey = probePageURL.host.length > 0
+                ? [probePageURL.host stringByAppendingString:probePageURL.path ?: @""]
+                : pageURLString;
+        }
+        [self forcePresentNativeVideoPlayerForURL:videoURL title:title requestHeaders:requestHeaders cookies:nil candidateMasterPlaylistURLs:candidateMasterPlaylistURLs subtitleFrameKey:subtitleFrameKey];
         NSLog(@"[NativeVideoPlayer] media probe presented url=%@ frame=%@", candidateURLString, pageURLString ?: @"");
         // The web view stamps each stored report with its receive time
         // (kBrowserMediaProbeTimestampKey in BrowserWebView.m, kept in the
@@ -492,6 +513,26 @@ static BOOL const kBrowserYouTubeNativeExtractionEnabled = NO;
                              requestHeaders:(NSDictionary<NSString *, NSString *> *)requestHeaders
                                     cookies:(NSArray<NSHTTPCookie *> *)cookies
                   candidateMasterPlaylistURLs:(NSArray<NSURL *> *)candidateMasterPlaylistURLs {
+    [self forcePresentNativeVideoPlayerForURL:URL
+                                        title:title
+                               requestHeaders:requestHeaders
+                                      cookies:cookies
+                  candidateMasterPlaylistURLs:candidateMasterPlaylistURLs
+                            subtitleFrameKey:nil];
+}
+
+// subtitleFrameKey: non-nil only on the media-probe paths — the frame key of
+// the probe that selected this video. The page's WebVTT subtitles are captured
+// from that frame (kisskh-family sites attach <track> TextTracks the native
+// takeover would otherwise lose) and the presentation waits on the completion;
+// the extract's 1.5s watchdog caps the takeover delay. nil frame key / empty
+// result: presented exactly as before, no overlay.
+- (void)forcePresentNativeVideoPlayerForURL:(NSURL *)URL
+                                      title:(NSString *)title
+                             requestHeaders:(NSDictionary<NSString *, NSString *> *)requestHeaders
+                                    cookies:(NSArray<NSHTTPCookie *> *)cookies
+                  candidateMasterPlaylistURLs:(NSArray<NSURL *> *)candidateMasterPlaylistURLs
+                            subtitleFrameKey:(NSString *)subtitleFrameKey {
     if (URL == nil) {
         return;
     }
@@ -510,6 +551,15 @@ static BOOL const kBrowserYouTubeNativeExtractionEnabled = NO;
     playerViewController.onRetry = ^{
         [weakSelf presentNativePlayerFromMediaProbes];
     };
+    if (subtitleFrameKey.length > 0) {
+        [self.host.browserWebView extractSubtitleTracksForFrameKey:subtitleFrameKey completion:^(NSArray<NSDictionary *> *subtitleTracks) {
+            // Main thread (extract contract): set before presentation; an
+            // empty array keeps the player identical to the no-overlay path.
+            playerViewController.subtitleTracks = subtitleTracks;
+            [weakSelf.host browserPresentViewController:playerViewController];
+        }];
+        return;
+    }
     [self.host browserPresentViewController:playerViewController];
 }
 

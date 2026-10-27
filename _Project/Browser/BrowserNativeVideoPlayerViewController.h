@@ -34,6 +34,14 @@ NS_ASSUME_NONNULL_BEGIN
 // presentation time to re-present from the freshest media probes.
 @property (nonatomic, copy, nullable) void (^onRetry)(void);
 
+// WebVTT subtitle tracks captured from the page at takeover time (see
+// BrowserWebView -extractSubtitleTracksForFrameKey:completion:), set by
+// BrowserVideoPlaybackCoordinator before presentation. Each dict either
+// carries parsed cues ({label, mode, cues:[{s,e,t}]}) or a VTT URL to fetch
+// ({label, src}). Non-empty: a time-synced cue overlay renders over the
+// video; nil or empty keeps the player behavior identical (no overlay).
+@property (nonatomic, copy, nullable) NSArray<NSDictionary *> *subtitleTracks; // [{label, mode, cues:[{s,e,t}]} or {label, src}]
+
 - (instancetype)initWithNibName:(nullable NSString *)nibNameOrNil bundle:(nullable NSBundle *)nibBundleOrNil NS_UNAVAILABLE;
 - (instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE;
 

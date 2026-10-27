@@ -578,6 +578,9 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
         if (handler != nil) {
             handler();
         }
+        // After the handler: diagnostics rows eval synchronously and must
+        // keep the full window until their eval returns.
+        [BrowserWebView setInteractivePumpTimeoutActive:YES];
     }];
 }
 
@@ -588,7 +591,9 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
 - (void)pressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event {
     UIPress *press = presses.anyObject;
     if (press != nil && press.type == UIPressTypeMenu) {
-        [self dismissMenuWithCompletion:nil];
+        [self dismissMenuWithCompletion:^{
+            [BrowserWebView setInteractivePumpTimeoutActive:YES];
+        }];
         return;
     }
     if (press != nil && (press.type == UIPressTypeLeftArrow || press.type == UIPressTypeRightArrow)) {
@@ -676,6 +681,9 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
 }
 
 - (void)showAdvancedMenu {
+    // Diagnostics rows need full 2.0s sync-eval windows; re-armed on every
+    // dismissal path below (and after the media-diagnostics eval itself).
+    [BrowserWebView setInteractivePumpTimeoutActive:NO];
     NSString *version = NSBundle.mainBundle.infoDictionary[@"CFBundleShortVersionString"];
     NSString *menuTitle = [self stringHasVisibleContent:version]
         ? [NSString stringWithFormat:@"Nebula Browser %@", version]
@@ -986,6 +994,10 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
 
 - (NSDictionary *)mediaDiagnosticsDictionary {
     NSString *resultString = [[self.host browserWebView] stringByEvaluatingJavaScriptFromString:[self mediaDiagnosticsJavaScript]];
+    // This eval ran with the interactive pump timeout disarmed by
+    // showAdvancedMenu; re-arm now that its full-window eval has returned,
+    // independent of the menu-dismissal re-arm path.
+    [BrowserWebView setInteractivePumpTimeoutActive:YES];
     if (![self stringHasVisibleContent:resultString]) {
         return nil;
     }
