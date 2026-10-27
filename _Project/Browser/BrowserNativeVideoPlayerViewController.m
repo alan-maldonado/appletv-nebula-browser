@@ -253,6 +253,65 @@ static NSArray<BrowserSubtitleCue *> *BrowserSubtitleCuesFromDictionaries(NSArra
     return cues;
 }
 
+// Cue labels use a clean multi-offset outline: the negative-NSStrokeWidthAttributeName
+// trick left horizontal striations/artifacts inside the glyph fills, so this label
+// draws the string eight times in the outline color and paints the fill on top.
+@interface BrowserOutlinedCueLabel : UILabel
+
+@property (nonatomic, strong) UIColor *outlineColor; // default black
+@property (nonatomic, assign) CGFloat outlineRadius; // default 2.5
+
+@end
+
+@implementation BrowserOutlinedCueLabel
+
+- (UIColor *)outlineColor {
+    if (_outlineColor == nil) {
+        _outlineColor = UIColor.blackColor;
+    }
+    return _outlineColor;
+}
+
+- (CGFloat)outlineRadius {
+    return _outlineRadius > 0.0 ? _outlineRadius : 2.5;
+}
+
+// drawRect: is NOT overridden: the eight outline passes happen here, then
+// super draws the yellow fill cleanly on top. The current graphics context state
+// is used as-is and this label never sets shadows.
+- (void)drawTextInRect:(CGRect)rect {
+    NSString *string = self.attributedText.string;
+    if (string.length == 0) {
+        string = self.text;
+    }
+    if (string.length == 0) {
+        [super drawTextInRect:rect];
+        return;
+    }
+    NSDictionary *base = self.attributedText.length > 0
+        ? [self.attributedText attributesAtIndex:0 effectiveRange:NULL]
+        : nil;
+    NSMutableParagraphStyle *paragraph = [NSMutableParagraphStyle new];
+    paragraph.alignment = self.textAlignment;
+    NSDictionary *outlineAttributes = @{
+        NSFontAttributeName: base[NSFontAttributeName] ?: self.font ?: [UIFont boldSystemFontOfSize:17.0],
+        NSParagraphStyleAttributeName: base[NSParagraphStyleAttributeName] ?: paragraph,
+        NSForegroundColorAttributeName: self.outlineColor,
+    };
+    CGFloat r = self.outlineRadius;
+    CGPoint offsets[8] = {
+        {-r, -r}, {0.0, -r}, {r, -r},
+        {-r, 0.0},             {r, 0.0},
+        {-r, r},  {0.0, r},  {r, r},
+    };
+    for (NSUInteger i = 0; i < 8; i++) {
+        [string drawInRect:CGRectOffset(rect, offsets[i].x, offsets[i].y) withAttributes:outlineAttributes];
+    }
+    [super drawTextInRect:rect];
+}
+
+@end
+
 @interface BrowserSubtitleOverlayView : UIView
 
 // requestHeaders: the media-request header policy (UA + Referer, no Origin)
@@ -270,7 +329,7 @@ static NSArray<BrowserSubtitleCue *> *BrowserSubtitleCuesFromDictionaries(NSArra
 
 @interface BrowserSubtitleOverlayView () <NSURLSessionDataDelegate>
 
-@property (nonatomic, strong) UILabel *cueLabel;
+@property (nonatomic, strong) BrowserOutlinedCueLabel *cueLabel;
 @property (nonatomic, copy) NSArray<BrowserSubtitleCue *> *cues;
 @property (nonatomic, copy) NSString *appliedCueText; // state guard: label only relayouts on text change
 @property (nonatomic, strong) id timeObserver;
@@ -290,17 +349,17 @@ static NSArray<BrowserSubtitleCue *> *BrowserSubtitleCuesFromDictionaries(NSArra
         _requestHeaders = [requestHeaders copy] ?: @{};
         self.userInteractionEnabled = NO;
 
-        _cueLabel = [UILabel new];
+        _cueLabel = [BrowserOutlinedCueLabel new];
         _cueLabel.numberOfLines = 3;
-        _cueLabel.font = [UIFont boldSystemFontOfSize:32.0];
+        _cueLabel.font = [UIFont boldSystemFontOfSize:38.0];
         _cueLabel.textColor = UIColor.yellowColor;
         _cueLabel.textAlignment = NSTextAlignmentCenter;
+        _cueLabel.adjustsFontSizeToFitWidth = NO;
         // Effectively none, but a nearly-invisible backdrop measurably improves
         // readability over bright video.
         _cueLabel.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.004];
-        _cueLabel.layer.shadowColor = UIColor.blackColor.CGColor;
-        _cueLabel.layer.shadowOpacity = 1.0;
-        _cueLabel.layer.shadowOffset = CGSizeMake(1.0, -1.0);
+        // No layer shadow: a shadow layered under the outlined fill produces
+        // dirty pixels inside the glyphs. The outline passes alone provide contrast.
         _cueLabel.attributedText = [self styledCueStringForText:@""];
         [self addSubview:_cueLabel];
 
@@ -415,17 +474,16 @@ willPerformHTTPRedirection:(__unused NSHTTPURLResponse *)response
     [self setNeedsLayout];
 }
 
-// Yellow fill with a black outline: a negative NSStrokeWidthAttributeName fills
-// the glyphs AND strokes them, so the cue stays readable over bright video.
+// Plain yellow fill: the outline is painted by BrowserOutlinedCueLabel's offset
+// passes, so the attributes here stay clean (the stroke trick left horizontal
+// striations inside the glyphs).
 - (NSAttributedString *)styledCueStringForText:(NSString *)text {
     NSMutableParagraphStyle *paragraph = [NSMutableParagraphStyle new];
     paragraph.alignment = NSTextAlignmentCenter;
     NSDictionary *attributes = @{
-        NSFontAttributeName: [UIFont boldSystemFontOfSize:32.0],
+        NSFontAttributeName: [UIFont boldSystemFontOfSize:38.0],
         NSParagraphStyleAttributeName: paragraph,
         NSForegroundColorAttributeName: UIColor.yellowColor,
-        NSStrokeColorAttributeName: UIColor.blackColor,
-        NSStrokeWidthAttributeName: @(-4.5),
     };
     return [[NSAttributedString alloc] initWithString:(text ?: @"") attributes:attributes];
 }
