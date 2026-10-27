@@ -261,6 +261,7 @@ static NSArray<BrowserSubtitleCue *> *BrowserSubtitleCuesFromDictionaries(NSArra
                                 player:(nullable AVPlayer *)player
                         requestHeaders:(nullable NSDictionary<NSString *, NSString *> *)requestHeaders NS_DESIGNATED_INITIALIZER;
 - (void)stopTimeObserving;
+- (NSAttributedString *)styledCueStringForText:(NSString *)text;
 
 - (instancetype)initWithFrame:(CGRect)frame NS_UNAVAILABLE;
 - (instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE;
@@ -291,8 +292,8 @@ static NSArray<BrowserSubtitleCue *> *BrowserSubtitleCuesFromDictionaries(NSArra
 
         _cueLabel = [UILabel new];
         _cueLabel.numberOfLines = 3;
-        _cueLabel.font = [UIFont boldSystemFontOfSize:26.0];
-        _cueLabel.textColor = UIColor.whiteColor;
+        _cueLabel.font = [UIFont boldSystemFontOfSize:32.0];
+        _cueLabel.textColor = UIColor.yellowColor;
         _cueLabel.textAlignment = NSTextAlignmentCenter;
         // Effectively none, but a nearly-invisible backdrop measurably improves
         // readability over bright video.
@@ -300,7 +301,7 @@ static NSArray<BrowserSubtitleCue *> *BrowserSubtitleCuesFromDictionaries(NSArra
         _cueLabel.layer.shadowColor = UIColor.blackColor.CGColor;
         _cueLabel.layer.shadowOpacity = 1.0;
         _cueLabel.layer.shadowOffset = CGSizeMake(1.0, -1.0);
-        _cueLabel.text = @"";
+        _cueLabel.attributedText = [self styledCueStringForText:@""];
         [self addSubview:_cueLabel];
 
         // Best track: first mode == "showing", else first with cues, else first.
@@ -410,8 +411,23 @@ willPerformHTTPRedirection:(__unused NSHTTPURLResponse *)response
         return; // no text change: skip the label's layout churn
     }
     self.appliedCueText = text;
-    self.cueLabel.text = text;
+    self.cueLabel.attributedText = [self styledCueStringForText:text];
     [self setNeedsLayout];
+}
+
+// Yellow fill with a black outline: a negative NSStrokeWidthAttributeName fills
+// the glyphs AND strokes them, so the cue stays readable over bright video.
+- (NSAttributedString *)styledCueStringForText:(NSString *)text {
+    NSMutableParagraphStyle *paragraph = [NSMutableParagraphStyle new];
+    paragraph.alignment = NSTextAlignmentCenter;
+    NSDictionary *attributes = @{
+        NSFontAttributeName: [UIFont boldSystemFontOfSize:32.0],
+        NSParagraphStyleAttributeName: paragraph,
+        NSForegroundColorAttributeName: UIColor.yellowColor,
+        NSStrokeColorAttributeName: UIColor.blackColor,
+        NSStrokeWidthAttributeName: @(-4.5),
+    };
+    return [[NSAttributedString alloc] initWithString:(text ?: @"") attributes:attributes];
 }
 
 // Cues are start-sorted: binary-search the first cue starting after time, then
