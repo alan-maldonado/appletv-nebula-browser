@@ -75,6 +75,10 @@
         // gesture (a launch arg can still flip it back to NO).
         @"WebViewAutoPlayAll": @YES,
         @"ForcePlayOnLaunch": @NO,
+        // Native click (trusted synthesized UITouch for page selections,
+        // so CAPTCHA/Trustwall cross-origin buttons work). Default ON;
+        // a launch arg flips it off to restore the JS-synthetic path.
+        @"NativeClickEnabled": @YES,
         // Default YES: the native player builds its asset as a plain
         // AVURLAsset with HTTP header options; a launch arg re-enables the
         // custom resource-loader path.
@@ -105,7 +109,8 @@
         @"WebViewAutoPlayAll",
         @"ForcePlayOnLaunch",
         @"NativePlayerLoaderDisabled",
-        @"ForceNativePresentOnPlay"
+        @"ForceNativePresentOnPlay",
+        @"NativeClickEnabled"
     ];
 
     NSArray<NSString *> *arguments = NSProcessInfo.processInfo.arguments;

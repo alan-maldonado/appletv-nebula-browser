@@ -1,6 +1,7 @@
 #import "BrowserPageActionCoordinator.h"
 
 #import "BrowserDOMInteractionService.h"
+#import "BrowserNativeTouchClick.h"
 #import "BrowserNavigationService.h"
 #import "BrowserVideoPlaybackCoordinator.h"
 #import "BrowserWebView.h"
@@ -192,6 +193,27 @@
                                                                                                 "if (tagName === 'textarea' || target.isContentEditable) { return 'text'; }"
                                                                                                 "if (tagName === 'input' && !type) { return 'text'; }"
                                                                                                 "return type;"];
+    // Editable fields keep the legacy path untouched (synthetic focus click
+    // + tvOS keyboard prompt exactly as before).
+    BOOL isEditableField = fieldType.length > 0;
+
+    // Native click: synthesize a REAL trusted tap through UIApplication's
+    // event pipeline at the cursor's screen point. This reaches widgets JS
+    // synthetic events cannot (isTrusted checks, cross-origin CAPTCHA
+    // iframes). On success it consumes the activation and we skip the JS
+    // dispatch; otherwise fall back to it unchanged.
+    if (!isEditableField &&
+        [[NSUserDefaults standardUserDefaults] boolForKey:@"NativeClickEnabled"]) {
+        UIView *container = [self.host browserPageActionCoordinatorContainerView];
+        UIWindow *window = container.window;
+        if (window != nil && [BrowserNativeTouchClick isAvailable]) {
+            CGPoint windowPoint = [self.host browserPageActionCoordinatorWindowPoint];
+            if ([BrowserNativeTouchClick tapAtWindowPoint:windowPoint inWindow:window]) {
+                return YES;
+            }
+        }
+    }
+
     [self.domInteractionService dispatchResolvedElementJavaScriptAtPoint:point
                                                                  webView:webView
                                                                     body:@"var target = editableElement || resolvedElement || interactiveElement;"

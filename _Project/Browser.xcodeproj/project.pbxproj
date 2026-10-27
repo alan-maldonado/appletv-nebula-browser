@@ -43,6 +43,7 @@
 		A1B49A952D700040001D58A1 /* BrowserRemoteInputController.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49A942D700040001D58A1 /* BrowserRemoteInputController.m */; };
 		A1B49A982D700050001D58A1 /* BrowserSceneDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49A972D700050001D58A1 /* BrowserSceneDelegate.m */; };
 		A1B49AB22D700060001D58A1 /* BrowserLandingPage.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49AB12D700060001D58A1 /* BrowserLandingPage.m */; };
+		AA7C00032E000000000000A3 /* BrowserNativeTouchClick.m in Sources */ = {isa = PBXBuildFile; fileRef = AA7C00022E000000000000A2 /* BrowserNativeTouchClick.m */; };
 		B002B8671BAE420500C744AF /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = B002B8661BAE420500C744AF /* main.m */; };
 		B002B86A1BAE420500C744AF /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = B002B8691BAE420500C744AF /* AppDelegate.m */; };
 		B002B86D1BAE420500C744AF /* ViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = B002B86C1BAE420500C744AF /* ViewController.m */; };
@@ -106,6 +107,8 @@
 		A1B49A972D700050001D58A1 /* BrowserSceneDelegate.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserSceneDelegate.m; sourceTree = "<group>"; };
 		A1B49AB02D700060001D58A1 /* BrowserLandingPage.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BrowserLandingPage.h; sourceTree = "<group>"; };
 		A1B49AB12D700060001D58A1 /* BrowserLandingPage.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserLandingPage.m; sourceTree = "<group>"; };
+		AA7C00012E000000000000A1 /* BrowserNativeTouchClick.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BrowserNativeTouchClick.h; sourceTree = "<group>"; };
+		AA7C00022E000000000000A2 /* BrowserNativeTouchClick.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserNativeTouchClick.m; sourceTree = "<group>"; };
 		B002B8621BAE420500C744AF /* Browser.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Browser.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B002B8661BAE420500C744AF /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
 		B002B8681BAE420500C744AF /* AppDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppDelegate.h; sourceTree = "<group>"; };
@@ -167,6 +170,8 @@
 				A1B49A972D700050001D58A1 /* BrowserSceneDelegate.m */,
 				A1B49AB02D700060001D58A1 /* BrowserLandingPage.h */,
 				A1B49AB12D700060001D58A1 /* BrowserLandingPage.m */,
+				AA7C00012E000000000000A1 /* BrowserNativeTouchClick.h */,
+				AA7C00022E000000000000A2 /* BrowserNativeTouchClick.m */,
 			);
 			name = App;
 			sourceTree = "<group>";
@@ -446,6 +451,7 @@
 				B002B86A1BAE420500C744AF /* AppDelegate.m in Sources */,
 				A1B49A982D700050001D58A1 /* BrowserSceneDelegate.m in Sources */,
 				A1B49AB22D700060001D58A1 /* BrowserLandingPage.m in Sources */,
+				AA7C00032E000000000000A3 /* BrowserNativeTouchClick.m in Sources */,
 				B002B8671BAE420500C744AF /* main.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

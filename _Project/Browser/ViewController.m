@@ -1157,6 +1157,14 @@ static UIColor *kTextColor(void) {
     return self.view;
 }
 
+- (CGPoint)browserPageActionCoordinatorWindowPoint {
+    // Cursor aim point (view space) converted to window coordinates for the
+    // native trusted touch click.
+    CGPoint aim = [self.remoteInputController cursorAimPoint];
+    UIView *view = self.view;
+    return [view.window convertPoint:aim fromView:view];
+}
+
 #pragma mark - BrowserRemoteInputControllerHost
 
 - (UIScrollView *)browserRemoteInputControllerActiveScrollView {

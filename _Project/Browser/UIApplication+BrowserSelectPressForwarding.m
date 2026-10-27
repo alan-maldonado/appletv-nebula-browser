@@ -2,6 +2,8 @@
 #import <objc/message.h>
 #import <objc/runtime.h>
 
+#import "BrowserNativeTouchClick.h"
+
 NSString * const BrowserGlobalSelectPressEndedNotification = @"BrowserGlobalSelectPressEndedNotification";
 static BOOL sBrowserNativeScrubTracking = NO;
 static CGFloat sBrowserNativePendingScrubPixels = 0.0;
@@ -141,6 +143,15 @@ static UIViewController *BrowserFindPresentedNativeVideoPlayerViewController(UIA
     UIViewController *nativeVideoPlayerViewController = BrowserFindPresentedNativeVideoPlayerViewController(self, nativeVideoPlayerClass);
 
     if (event.type == UIEventTypeTouches) {
+        if (BrowserNativeTouchClickTapIsActive()) {
+            // Synthetic native-click tap: its touch is UITouchTypeUnknown
+            // (never remote/Indirect), so it is of no interest to the scrub
+            // interceptor. Pass it straight through — importantly, never
+            // let a mid-scrub swallow flag eat it.
+            [self browser_sendEvent:event];
+            return;
+        }
+
         SEL allTouchesSelector = NSSelectorFromString(@"allTouches");
         if ([event respondsToSelector:allTouchesSelector]) {
             NSSet<UITouch *> *touches = ((id (*)(id, SEL))objc_msgSend)(event, allTouchesSelector);
