@@ -6,6 +6,11 @@
 @interface BrowserNavigationService : NSObject
 
 - (instancetype)initWithPreferencesStore:(BrowserPreferencesStore *)preferencesStore;
+// YES when the user stored an explicit home page; an empty preference means
+// the built-in favorites landing page should be shown instead.
+- (BOOL)hasCustomHomePage;
+// Custom home page request; nil when hasCustomHomePage is NO — callers must
+// branch to the landing page in that case.
 - (NSURLRequest *)homePageRequest;
 - (NSURLRequest *)requestForURLString:(NSString *)URLString;
 - (NSURLRequest *)requestForEnteredAddressString:(NSString *)addressString;

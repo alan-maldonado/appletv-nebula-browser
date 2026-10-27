@@ -23,6 +23,19 @@ static NSUInteger const kMaximumTextFontSize = 200;
 
 @implementation BrowserPreferencesStore
 
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        // An empty homepage means the built-in favorites landing page; make
+        // that the registered default (never inject Google).
+        static dispatch_once_t onceToken;
+        dispatch_once(&onceToken, ^{
+            [[NSUserDefaults standardUserDefaults] registerDefaults:@{ kHomepageDefaultsKey : @"" }];
+        });
+    }
+    return self;
+}
+
 + (NSString *)desktopUserAgent {
     return @"Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
 }

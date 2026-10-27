@@ -27,10 +27,16 @@ static NSUInteger const kMaximumHistoryCount = 100;
     return self;
 }
 
+- (BOOL)hasCustomHomePage {
+    return self.preferencesStore.homePageURLString.length > 0;
+}
+
 - (NSURLRequest *)homePageRequest {
     NSString *homePageURLString = self.preferencesStore.homePageURLString;
     if (homePageURLString.length == 0) {
-        homePageURLString = @"http://www.google.com";
+        // No Google default: the default home page is the favorites landing
+        // page, loaded through BrowserLandingPage by the callers.
+        return nil;
     }
     return [self requestForURLString:homePageURLString];
 }

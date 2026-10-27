@@ -42,6 +42,7 @@
 		A1B49A922D700030001D58A1 /* BrowserPageActionCoordinator.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49A912D700030001D58A1 /* BrowserPageActionCoordinator.m */; };
 		A1B49A952D700040001D58A1 /* BrowserRemoteInputController.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49A942D700040001D58A1 /* BrowserRemoteInputController.m */; };
 		A1B49A982D700050001D58A1 /* BrowserSceneDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49A972D700050001D58A1 /* BrowserSceneDelegate.m */; };
+		A1B49AB22D700060001D58A1 /* BrowserLandingPage.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49AB12D700060001D58A1 /* BrowserLandingPage.m */; };
 		B002B8671BAE420500C744AF /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = B002B8661BAE420500C744AF /* main.m */; };
 		B002B86A1BAE420500C744AF /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = B002B8691BAE420500C744AF /* AppDelegate.m */; };
 		B002B86D1BAE420500C744AF /* ViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = B002B86C1BAE420500C744AF /* ViewController.m */; };
@@ -103,6 +104,8 @@
 		A1B49A942D700040001D58A1 /* BrowserRemoteInputController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserRemoteInputController.m; sourceTree = "<group>"; };
 		A1B49A962D700050001D58A1 /* BrowserSceneDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BrowserSceneDelegate.h; sourceTree = "<group>"; };
 		A1B49A972D700050001D58A1 /* BrowserSceneDelegate.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserSceneDelegate.m; sourceTree = "<group>"; };
+		A1B49AB02D700060001D58A1 /* BrowserLandingPage.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BrowserLandingPage.h; sourceTree = "<group>"; };
+		A1B49AB12D700060001D58A1 /* BrowserLandingPage.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserLandingPage.m; sourceTree = "<group>"; };
 		B002B8621BAE420500C744AF /* Browser.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Browser.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B002B8661BAE420500C744AF /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
 		B002B8681BAE420500C744AF /* AppDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppDelegate.h; sourceTree = "<group>"; };
@@ -162,6 +165,8 @@
 				B002B8691BAE420500C744AF /* AppDelegate.m */,
 				A1B49A962D700050001D58A1 /* BrowserSceneDelegate.h */,
 				A1B49A972D700050001D58A1 /* BrowserSceneDelegate.m */,
+				A1B49AB02D700060001D58A1 /* BrowserLandingPage.h */,
+				A1B49AB12D700060001D58A1 /* BrowserLandingPage.m */,
 			);
 			name = App;
 			sourceTree = "<group>";
@@ -440,6 +445,7 @@
 				B002B86D1BAE420500C744AF /* ViewController.m in Sources */,
 				B002B86A1BAE420500C744AF /* AppDelegate.m in Sources */,
 				A1B49A982D700050001D58A1 /* BrowserSceneDelegate.m in Sources */,
+				A1B49AB22D700060001D58A1 /* BrowserLandingPage.m in Sources */,
 				B002B8671BAE420500C744AF /* main.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

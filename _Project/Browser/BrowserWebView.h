@@ -43,6 +43,9 @@ NS_ASSUME_NONNULL_BEGIN
       allowsInlineMediaPlayback:(BOOL)allowsInlineMediaPlayback NS_DESIGNATED_INITIALIZER;
 
 - (void)loadRequest:(NSURLRequest * _Nullable)request;
+// Loads a built-in HTML document (e.g. the favorites landing page) directly
+// into the runtime web view without a network request.
+- (void)loadLandingHTML:(NSString * _Nonnull)html baseURL:(nullable NSURL *)baseURL;
 - (void)reload;
 - (void)goBack;
 - (void)goForward;

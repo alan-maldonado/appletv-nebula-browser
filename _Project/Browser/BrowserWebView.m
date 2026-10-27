@@ -1535,6 +1535,17 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
     }
 }
 
+- (void)loadLandingHTML:(NSString *)html baseURL:(nullable NSURL *)baseURL {
+    if (html.length == 0 || self.runtimeWebView == nil) {
+        return;
+    }
+    self.lastTitle = @"Favorites";
+    SEL selector = NSSelectorFromString(@"loadHTMLString:baseURL:");
+    if ([self.runtimeWebView respondsToSelector:selector]) {
+        ((id (*)(id, SEL, id, id))objc_msgSend)(self.runtimeWebView, selector, html, baseURL);
+    }
+}
+
 - (void)reload {
     SEL selector = NSSelectorFromString(@"reload");
     if (self.runtimeWebView != nil && [self.runtimeWebView respondsToSelector:selector]) {

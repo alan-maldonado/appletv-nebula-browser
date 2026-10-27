@@ -1204,6 +1204,18 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
     }];
 }
 
+- (BrowserAdvancedMenuItem *)resetHomePageMenuItem {
+    return [self advancedMenuItemWithTitle:@"Reset Home Page to Favorites"
+                                     style:UIAlertActionStyleDefault
+                                   handler:^{
+        // Clearing the stored URL is the marker for the built-in favorites
+        // landing page; reload so the grid (and any recent favorite changes)
+        // show immediately.
+        self.preferencesStore.homePageURLString = @"";
+        [self.host browserLoadHomePage];
+    }];
+}
+
 - (BrowserAdvancedMenuItem *)searchEngineMenuItem {
     NSString *(^titleForEngine)(void) = ^NSString * {
         return [NSString stringWithFormat:@"Search Engine: %@", [[BrowserPreferencesStore new] searchEngineName]];
@@ -1529,6 +1541,7 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
                                                items:@[
             [self homePageMenuItem],
             [self setCurrentPageAsHomePageMenuItem],
+            [self resetHomePageMenuItem],
             [self favoritesMenuItem],
             [self historyMenuItem],
             [self showTabsMenuItem],
