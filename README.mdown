@@ -11,6 +11,8 @@ Nebula Browser
 
 ![Full screen video player](/screen04.png?raw=true "Nebula Browser video player")
 
+![Favorites home](/screen06.png?raw=true "Nebula Browser Favorites home")
+
 
 ***Nebula Browser*** is a web browser for Apple TV devices running tvOS. It uses private API's that Apple normally does not allow in App Store distributed apps. Highlights:
 - Uses WKWebView for fast, modern website rendering.
@@ -79,6 +81,9 @@ Video:
 - Pages with several players (for example a multi-stream grid): the full screen control opens the video you pressed it on, not the first one on the page.
 
 Nebula Remote (type from your iPhone or Mac):
+
+![Nebula Remote panel](/screen07.png?raw=true "Nebula Remote panel with Now playing and trackpad")
+
 - While Nebula is open, any browser on the same network can control text input: open `http://<your-apple-tv>.local:8080` (Settings → Nebula Remote shows the exact address, e.g. `http://Alans-Apple-TV-4K.local:8080`). On iPhone, Share → Add to Home Screen gives it an app icon.
 - Type a URL or search and choose **Open** (current tab) or **Open in new tab**.
 - Click a text field on the TV and the page asks for it ("Nebula asks for…"): type there and send; tick "Submit form" to submit the form. Clicking the TV's address bar asks for a URL or search the same way.
