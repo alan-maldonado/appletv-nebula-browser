@@ -17,6 +17,9 @@ Nebula Browser
 - Browser tabs with a focus-driven overview.
 - Modern Liquid Glass UI with selectable accent themes (the app icon follows the theme).
 - A built-in full screen video player with fast-forward, scrubbing and a transport bar.
+- A Favorites home screen with every saved site one press away.
+- Nebula Remote: control the TV from your iPhone or Mac — type, trackpad, tabs, favorites and playback controls.
+- Sign-ins are kept between launches (cookies and site storage are saved).
 - Multiple search engines, page zoom, and privacy options.
 
 Nebula Browser was developed with the help of AI ([Claude Code](https://claude.com/claude-code)): the full screen video player transport controls (fast-forward, scrubbing, transport bar, resume), the back/double-back navigation, the arrow button shortcuts, the per-page video fullscreen, the privacy options, and many input-handling fixes were built in collaboration with it. It is based on the open-source *tvOS Browser* by Steven Troughton-Smith and Jip van Akker.
@@ -63,31 +66,39 @@ Tabs overview:
 - Swipe up (or tap Play/Pause) to close the focused tab, with an app-switcher style animation.
 - Tap Menu to close the overview.
 
+Favorites home:
+- Turn on **Favorites as Home Page** (Settings → Navigation) and Go To Home Page, new tabs and *On Launch: Home Page* show a grid of all your favorites instead of loading the home page URL.
+- Each card shows the site's icon (or its initial on the theme color), its name and domain.
+- Press the touch area to open the focused favorite in the current tab, Play/Pause to open it in a new tab, Menu to close the grid and return to the page you were on.
+
 Video:
 - Videos play inline on the page. Double-tap a video, or use the page's own full screen control, to open it.
 - When a direct media URL is available it opens in the built-in full screen player; otherwise it expands within the page.
 - Full screen player: press Right to fast-forward at 2x → 32x, Left to slow down, Play/Pause to resume from that point. Left/Right while paused skip ±10s. Swipe to scrub (quick swipes accelerate). Back cancels a fast-forward/scrub and returns to where you were. Videos resume where you left off.
 - A "Full Screen Player" option in Settings can make videos always open in the built-in player instead of inline.
+- Pages with several players (for example a multi-stream grid): the full screen control opens the video you pressed it on, not the first one on the page.
 
 Nebula Remote (type from your iPhone or Mac):
 - While Nebula is open, any browser on the same network can control text input: open `http://<your-apple-tv>.local:8080` (Settings → Nebula Remote shows the exact address, e.g. `http://Alans-Apple-TV-4K.local:8080`). On iPhone, Share → Add to Home Screen gives it an app icon.
 - Type a URL or search and choose **Open** (current tab) or **Open in new tab**.
 - Click a text field on the TV and the page asks for it ("Nebula asks for…"): type there and send; tick "Submit form" to submit the form. Clicking the TV's address bar asks for a URL or search the same way.
-- **Trackpad:** move Nebula's cursor from the panel — on a Mac click the pad to capture the pointer (Esc releases it), click/double-click and scroll with the trackpad; on iPhone drag to move, tap to click, two fingers to scroll. A speed slider adjusts sensitivity per device.
+- **Trackpad:** move Nebula's cursor from the panel — on a Mac hover the pad, or press **Capture mouse** in the Trackpad header to capture the pointer (Esc releases it; it's also released when the TV goes full screen), click/double-click and scroll with the trackpad; on iPhone drag to move, tap to click, two fingers to scroll. A speed slider adjusts sensitivity per device.
+- **Now playing:** while a video is loaded (in the built-in player or on the page) a card shows its title and progress, with play/pause, −30/−10/+10/+30 s, a seek bar (LIVE for live streams) and **Exit full screen**.
 - **Tabs:** see the TV's tabs live, tap one to switch to it, ✕ to close it, **+ New** for a new tab.
 - **Favorites:** add a URL or the TV's current page, open (here or in a new tab), edit, reorder (drag on a computer, Move up/Move down anywhere) and delete. Changes made on the TV show up in the panel too.
-- **Home:** set the home page (or use the TV's current page) and whether Nebula opens with the last session or the home page.
+- **Home:** set the home page (or use the TV's current page), whether Nebula opens with the last session or the home page, and whether Favorites is shown as the home page.
 - Share sheet shortcut (iOS and macOS Shortcuts app): new shortcut → enable "Show in Share Sheet" receiving URLs → action **Get Contents of URL** with URL `http://<your-apple-tv>.local:8080/api/open`, Method **POST**, Request Body **JSON** with `text` = Shortcut Input and `newTab` = true (Boolean).
 - Bookmarklet for any desktop browser (sends the current page to a new TV tab):
   `javascript:window.open('http://<your-apple-tv>.local:8080/?tab=new&open='+encodeURIComponent(location.href))`
+- Behind a reverse proxy on your network the panel also answers on `.lan` names (besides `.local` and IP addresses); pass the original `Host` header and the WebSocket upgrade headers so the trackpad keeps working.
 - Only works while Nebula is in the foreground; anyone on your Wi-Fi can use it, so turn it off in Settings if you don't want that.
 
 Settings (Side menu) include:
-- Navigation: home page, favorites, history, tabs, new tab, arrow shortcuts on/off, Nebula Remote on/off.
+- Navigation: home page, Favorites as Home Page, favorites, history, tabs, new tab, arrow shortcuts on/off, Nebula Remote on/off.
 - Appearance: accent theme, top navigation bar, page scaling, font size.
 - Video Playback: full screen player, player time display (remaining / total).
 - Search: search engine (Google, Bing, DuckDuckGo, Yahoo, Ecosia, Brave, Startpage).
-- Privacy: what to open on launch (last session / home page), clear history on exit, privacy mode (hide content in the app switcher).
+- Privacy: what to open on launch (last session / home page), clear history on exit, privacy mode (hide content in the app switcher). Cookies and site storage (localStorage, IndexedDB) are kept between launches, so sites stay signed in; tvOS may clear them only if the Apple TV runs low on space.
 - Compatibility: desktop / mobile user agent.
 - Maintenance: clear cache, clear cookies.
 - Help: usage guide, show guide on launch.
