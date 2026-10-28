@@ -16,11 +16,11 @@ static CGFloat const kFavoritesHomeSubtitleHeight = 36.0;
 static CGFloat const kFavoritesHomeContentTopInset = 160.0;
 static CGFloat const kFavoritesHomeFooterHeight = 28.0;
 static NSInteger const kFavoritesHomeColumns = 4;
-static CGFloat const kFavoritesHomeCardHeight = 300.0;
-static CGFloat const kFavoritesHomeCardSpacing = 44.0;
+static CGFloat const kFavoritesHomeCardHeight = 260.0;
+static CGFloat const kFavoritesHomeCardSpacing = 36.0;
 static CGFloat const kFavoritesHomeCardGlowInset = 24.0;
 static CGFloat const kFavoritesHomeIconSize = 120.0;
-static CGFloat const kFavoritesHomeIconTop = 34.0;
+static CGFloat const kFavoritesHomeIconTop = 26.0;
 
 static NSString *BrowserFavoritesHomeHost(NSString *URLString) {
     NSString *host = [NSURL URLWithString:URLString].host.lowercaseString ?: @"";
@@ -150,7 +150,7 @@ static void BrowserFavoritesHomeLoadIcon(NSString *URLString, void (^completion)
     self.iconTileView.frame = CGRectMake((width - kFavoritesHomeIconSize) / 2.0, kFavoritesHomeIconTop, kFavoritesHomeIconSize, kFavoritesHomeIconSize);
     self.monogramLabel.frame = self.iconTileView.bounds;
     self.iconImageView.frame = self.iconTileView.bounds;
-    CGFloat textTop = kFavoritesHomeIconTop + kFavoritesHomeIconSize + 26.0;
+    CGFloat textTop = kFavoritesHomeIconTop + kFavoritesHomeIconSize + 16.0;
     self.titleLabel.frame = CGRectMake(24.0, textTop, width - 48.0, 40.0);
     self.domainLabel.frame = CGRectMake(24.0, textTop + 44.0, width - 48.0, 30.0);
 }
