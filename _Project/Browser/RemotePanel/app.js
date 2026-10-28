@@ -3,7 +3,7 @@
 
 // Admin actions turned on so far; their buttons stay disabled until listed here.
 var ENABLED_ACTIONS = ['tabs/switch', 'tabs/close', 'tabs/new',
-  'favorites/add', 'favorites/update', 'favorites/remove', 'favorites/move', 'favorites/open', 'home'];
+  'favorites/add', 'favorites/update', 'favorites/remove', 'favorites/move', 'favorites/open', 'home', 'media'];
 
 var $ = function (id) { return document.getElementById(id); };
 var state = null;
@@ -63,7 +63,8 @@ var ERROR_TEXT = {
   'invalid-launch': 'Invalid option',
   'no-current-page': 'The TV has no page open',
   'invalid-request': 'Invalid request',
-  'tv-busy': 'The TV is closing a tab, try again'
+  'tv-busy': 'The TV is closing a tab, try again',
+  'no-media': 'Nothing is playing on the TV'
 };
 
 // POST /api/<action>; reports errors in the section's toast.
@@ -267,6 +268,7 @@ function renderHome() {
   var home = state.home || {};
   if (document.activeElement !== $('homeURL')) { $('homeURL').value = home.url || ''; }
   document.querySelectorAll('input[name=launch]').forEach(function (radio) { radio.checked = radio.value === home.launch; });
+  $('homeFavorites').checked = !!home.favorites;
 }
 
 // ---- Trackpad ----------------------------------------------------------------
@@ -452,6 +454,65 @@ function setupPad() {
   if (DESKTOP.matches) { padOpen(); }
 }
 
+// ---- Now playing -------------------------------------------------------------
+
+// The TV publishes the playhead only on play/pause/seek; between those the panel
+// advances it from when the state arrived.
+var media = null;
+var mediaReceivedAt = 0;
+var mediaDragging = false;
+var mediaWasFullscreen = false;
+
+function formatTime(seconds) {
+  seconds = Math.max(0, Math.floor(seconds));
+  var h = Math.floor(seconds / 3600), m = Math.floor(seconds / 60) % 60, s = seconds % 60;
+  var mm = h ? String(m).padStart(2, '0') : String(m);
+  return (h ? h + ':' : '') + mm + ':' + String(s).padStart(2, '0');
+}
+
+function mediaPlayhead() {
+  var time = media.time;
+  if (media.playing) { time += (performance.now() - mediaReceivedAt) / 1000 * media.rate; }
+  return media.duration !== null ? Math.min(time, media.duration) : time;
+}
+
+function tickMedia() {
+  if (!media || mediaDragging) { return; }
+  var time = mediaPlayhead();
+  $('mediaTime').textContent = formatTime(time);
+  if (media.duration !== null) { $('mediaSeek').value = String(time); }
+}
+
+function renderMedia(next) {
+  media = next || null;
+  mediaReceivedAt = performance.now();
+  // Entering full screen on the TV frees the mouse: the trackpad has nothing to aim at there.
+  var fullscreen = !!(media && media.fullscreen);
+  if (fullscreen && !mediaWasFullscreen && padLocked()) { document.exitPointerLock(); }
+  mediaWasFullscreen = fullscreen;
+  $('mediaCard').hidden = !media;
+  if (!media) { return; }
+  $('mediaTitle').textContent = media.title || 'Video';
+  $('mediaSource').textContent = media.source === 'native' ? 'TV player' : 'In the page';
+  $('mediaToggle').textContent = media.playing ? '❚❚' : '▶';
+  $('mediaExitFullscreen').hidden = !media.fullscreen;
+  var live = media.duration === null;
+  $('mediaSeek').hidden = live;
+  if (!live) { $('mediaSeek').max = String(media.duration); }
+  $('mediaDuration').textContent = live ? 'LIVE' : formatTime(media.duration);
+  tickMedia();
+}
+
+// Moves the local playhead right away; the TV's state confirms it a moment later.
+function mediaCommand(payload, localTime) {
+  if (media && localTime !== undefined) {
+    media.time = media.duration !== null ? Math.min(Math.max(0, localTime), media.duration) : Math.max(0, localTime);
+    mediaReceivedAt = performance.now();
+    tickMedia();
+  }
+  act('media', payload, 'mediaToast');
+}
+
 // ---- Estado ------------------------------------------------------------------
 
 function applyEnabledActions() {
@@ -468,6 +529,7 @@ function render(next) {
   var page = state.page || {};
   status(page.title ? ('On the TV: ' + page.title) : 'Connected to the TV', false);
   renderField(state.field);
+  renderMedia(state.media);
   renderTabs();
   renderFavorites();
   renderHome();
@@ -522,6 +584,27 @@ $('homeSave').onclick = function () { act('home', { url: $('homeURL').value }, '
 document.querySelectorAll('input[name=launch]').forEach(function (radio) {
   radio.onchange = function () { act('home', { launch: radio.value }, 'homeToast', 'Saved'); };
 });
+$('homeFavorites').onchange = function () { act('home', { favorites: $('homeFavorites').checked }, 'homeToast', 'Saved'); };
+
+$('mediaToggle').onclick = function () { mediaCommand({ command: 'toggle' }); };
+$('mediaExitFullscreen').onclick = function () { mediaCommand({ command: 'exit-fullscreen' }); };
+document.querySelectorAll('[data-skip]').forEach(function (node) {
+  node.onclick = function () {
+    if (!media) { return; }
+    var delta = parseFloat(node.getAttribute('data-skip'));
+    mediaCommand({ command: 'skip', delta: delta }, mediaPlayhead() + delta);
+  };
+});
+$('mediaSeek').oninput = function () {
+  mediaDragging = true;
+  $('mediaTime').textContent = formatTime(parseFloat($('mediaSeek').value));
+};
+$('mediaSeek').onchange = function () {
+  mediaDragging = false;
+  var time = parseFloat($('mediaSeek').value);
+  mediaCommand({ command: 'seek', time: time }, time);
+};
+setInterval(tickMedia, 250);
 
 applyEnabledActions();
 setupPad();

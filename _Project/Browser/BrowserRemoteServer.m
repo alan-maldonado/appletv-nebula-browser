@@ -224,6 +224,7 @@ static const char * const kBrowserRemotePorts[] = {"8080", "8081", "8082"};
         @"/api/favorites/move": @"POST",
         @"/api/favorites/open": @"POST",
         @"/api/home": @"POST",
+        @"/api/media": @"POST",
     };
     if (!BrowserRemoteRequestHasTrustedHost(request)) {
         [self finish:client data:BrowserRemoteJSONResponseData(403, @{@"error": @"untrusted-host"})];

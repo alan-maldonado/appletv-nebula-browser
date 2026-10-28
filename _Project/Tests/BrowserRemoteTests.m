@@ -129,6 +129,9 @@ static void testTrustsLocalHostsOnly(void) {
     EXPECT(BrowserRemoteRequestHasTrustedHost(ParsedRequest(@"GET / HTTP/1.1\r\nHost: 192.168.1.20:8080\r\n\r\n")), @"IPv4 rejected");
     EXPECT(BrowserRemoteRequestHasTrustedHost(ParsedRequest(@"GET / HTTP/1.1\r\nHost: [fe80::1]:8080\r\n\r\n")), @"IPv6 rejected");
     EXPECT(BrowserRemoteRequestHasTrustedHost(ParsedRequest(@"GET / HTTP/1.1\r\nHost: localhost:8080\r\n\r\n")), @"localhost rejected");
+    EXPECT(BrowserRemoteRequestHasTrustedHost(ParsedRequest(@"GET / HTTP/1.1\r\nHost: appletv.lan\r\n\r\n")), @".lan proxy host rejected");
+    EXPECT(BrowserRemoteRequestHasTrustedHost(ParsedRequest(@"GET / HTTP/1.1\r\nHost: appletv.lan.orbitware.app\r\n\r\n")), @"orbitware.app proxy host rejected");
+    EXPECT(!BrowserRemoteRequestHasTrustedHost(ParsedRequest(@"GET / HTTP/1.1\r\nHost: orbitware.app.evil.com\r\n\r\n")), @"orbitware.app lookalike accepted");
     EXPECT(!BrowserRemoteRequestHasTrustedHost(ParsedRequest(@"GET / HTTP/1.1\r\nHost: evil.example.com:8080\r\n\r\n")), @"rebinding host accepted");
     EXPECT(!BrowserRemoteRequestHasTrustedHost(ParsedRequest(@"GET / HTTP/1.1\r\n\r\n")), @"missing host accepted");
 }
@@ -250,6 +253,47 @@ static void testStateIncludesAdminSections(void) {
     EXPECT([[state JSONObject][@"tabs"][0][@"id"] isEqualToString:@"t1"], @"json tabs %@", [state JSONObject]);
 }
 
+static void testMediaOnlyBumpsOnPlayheadJumps(void) {
+    BrowserRemoteState *state = [BrowserRemoteState new];
+    EXPECT([state JSONObject][@"media"] == NSNull.null, @"default media %@", [state JSONObject][@"media"]);
+    NSDictionary *playing = @{@"source": @"native", @"title": @"Movie", @"time": @10.0, @"duration": @100.0, @"playing": @YES, @"rate": @1.0};
+    [state updateMedia:playing now:1000.0];
+    EXPECT(state.version == 2, @"first media %lu", (unsigned long)state.version);
+
+    // Playhead where playback would have put it: no bump, and the snapshot advances on its own.
+    [state updateMedia:@{@"source": @"native", @"title": @"Movie", @"time": @15.4, @"duration": @100.0, @"playing": @YES, @"rate": @1.0} now:1005.0];
+    EXPECT(state.version == 2, @"steady playback bumped %lu", (unsigned long)state.version);
+    EXPECT([[state JSONObjectAtTime:1007.0][@"media"][@"time"] doubleValue] == 17.0, @"extrapolated %@", [state JSONObjectAtTime:1007.0][@"media"]);
+    EXPECT([[state JSONObjectAtTime:2000.0][@"media"][@"time"] doubleValue] == 100.0, @"clamped %@", [state JSONObjectAtTime:2000.0][@"media"]);
+
+    // Seek (playhead jump) and pause both publish.
+    [state updateMedia:@{@"source": @"native", @"title": @"Movie", @"time": @60.0, @"duration": @100.0, @"playing": @YES, @"rate": @1.0} now:1006.0];
+    EXPECT(state.version == 3, @"seek not published %lu", (unsigned long)state.version);
+    [state updateMedia:@{@"source": @"native", @"title": @"Movie", @"time": @60.2, @"duration": @100.0, @"playing": @NO, @"rate": @1.0} now:1006.2];
+    EXPECT(state.version == 4, @"pause not published %lu", (unsigned long)state.version);
+    [state updateMedia:@{@"source": @"native", @"title": @"Movie", @"time": @60.2, @"duration": @100.0, @"playing": @NO, @"rate": @1.0, @"fullscreen": @YES} now:1006.3];
+    EXPECT(state.version == 5 && [[state JSONObject][@"media"][@"fullscreen"] boolValue], @"fullscreen not published %lu", (unsigned long)state.version);
+    EXPECT([[state JSONObjectAtTime:1100.0][@"media"][@"time"] doubleValue] == 60.2, @"paused time moved %@", [state JSONObjectAtTime:1100.0][@"media"]);
+
+    // Live stream: non-finite duration becomes null.
+    [state updateMedia:@{@"source": @"page", @"title": @"Live", @"time": @5.0, @"duration": @(INFINITY), @"playing": @YES, @"rate": @1.0} now:1200.0];
+    EXPECT([state JSONObject][@"media"][@"duration"] == NSNull.null, @"live duration %@", [state JSONObject][@"media"]);
+    [state updateMedia:nil now:1201.0];
+    EXPECT([state JSONObject][@"media"] == NSNull.null && state.version == 7, @"cleared %lu", (unsigned long)state.version);
+}
+
+static void testMediaPayloads(void) {
+    NSString *error = nil;
+    EXPECT([BrowserRemoteActionPayload(@"media", @{@"command": @"toggle"}, &error) isEqual:@{@"command": @"toggle"}], @"toggle %@", error);
+    EXPECT([BrowserRemoteActionPayload(@"media", @{@"command": @"exit-fullscreen"}, &error) isEqual:@{@"command": @"exit-fullscreen"}], @"exit-fullscreen %@", error);
+    EXPECT([BrowserRemoteActionPayload(@"media", @{@"command": @"seek", @"time": @42.5}, &error) isEqual:(@{@"command": @"seek", @"time": @42.5})], @"seek %@", error);
+    EXPECT([BrowserRemoteActionPayload(@"media", @{@"command": @"skip", @"delta": @-10}, &error) isEqual:(@{@"command": @"skip", @"delta": @-10.0})], @"skip %@", error);
+    EXPECT(BrowserRemoteActionPayload(@"media", @{@"command": @"seek", @"time": @-1}, &error) == nil, @"negative seek accepted");
+    EXPECT(BrowserRemoteActionPayload(@"media", @{@"command": @"seek", @"time": @"10"}, &error) == nil, @"string seek accepted");
+    EXPECT(BrowserRemoteActionPayload(@"media", @{@"command": @"skip"}, &error) == nil, @"skip without delta accepted");
+    EXPECT(BrowserRemoteActionPayload(@"media", @{@"command": @"eject"}, &error) == nil && [error isEqualToString:@"invalid-request"], @"unknown command %@", error);
+}
+
 static void testTabPayloads(void) {
     NSString *error = nil;
     EXPECT(BrowserRemoteActionPayload(@"tabs/switch", @{}, &error) == nil && [error isEqualToString:@"invalid-request"], @"switch {} %@", error);
@@ -306,6 +350,9 @@ static void testHomePayload(void) {
     EXPECT(BrowserRemoteActionPayload(@"home", @{}, &error) == nil && [error isEqualToString:@"invalid-request"], @"empty %@", error);
     NSDictionary *url = BrowserRemoteActionPayload(@"home", @{@"url": @" https://www.google.com "}, &error);
     EXPECT([url[@"url"] isEqualToString:@"https://www.google.com"], @"url %@", url);
+    NSDictionary *favorites = BrowserRemoteActionPayload(@"home", @{@"favorites": @YES}, &error);
+    EXPECT([favorites isEqualToDictionary:@{@"favorites": @YES}], @"favorites %@", favorites);
+    EXPECT(BrowserRemoteActionPayload(@"home", @{@"favorites": @"yes"}, &error) == nil, @"string favorites accepted");
 }
 
 static NSData *Hex(NSString *hex) {
@@ -461,6 +508,8 @@ int main(void) {
             {"testMoveAndUpdate", testMoveAndUpdate},
             {"testMutationPostsNotification", testMutationPostsNotification},
             {"testStateIncludesAdminSections", testStateIncludesAdminSections},
+            {"testMediaOnlyBumpsOnPlayheadJumps", testMediaOnlyBumpsOnPlayheadJumps},
+            {"testMediaPayloads", testMediaPayloads},
             {"testTabPayloads", testTabPayloads},
             {"testWebURLValidation", testWebURLValidation},
             {"testFavoritePayloads", testFavoritePayloads},

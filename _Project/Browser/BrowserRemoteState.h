@@ -15,11 +15,19 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)updateTabs:(NSArray<NSDictionary *> *)tabs;
 // Each favorite: url, title.
 - (void)updateFavorites:(NSArray<NSDictionary *> *)favorites;
-// url, launch ("last-session" | "home-page").
+// url, launch ("last-session" | "home-page"), favorites (BOOL: Favorites as Home Page).
 - (void)updateHome:(NSDictionary *)home;
 // accent, onAccent (hex colors).
 - (void)updateTheme:(NSDictionary *)theme;
-// {v, page, field, tabs, favorites, home, theme}
+// Now playing (native player or page <video>), or nil when nothing is loaded.
+// Keys: source ("native" | "page"), title, time, duration (NSNull when unknown/live),
+// playing (BOOL), rate, fullscreen (BOOL). now is NSProcessInfo.systemUptime. Bumps the version only
+// when something besides the playhead changed or the playhead jumped (> 1 s off
+// from where playback would have put it): the panel advances the clock itself.
+- (void)updateMedia:(nullable NSDictionary *)media now:(NSTimeInterval)now;
+// {v, page, field, tabs, favorites, home, theme, media}; the media time is
+// advanced to now.
+- (NSDictionary *)JSONObjectAtTime:(NSTimeInterval)now;
 - (NSDictionary *)JSONObject;
 
 @end

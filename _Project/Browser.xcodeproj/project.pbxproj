@@ -41,6 +41,7 @@
 		A1B49A892D700000001D58A1 /* BrowserPreferencesStore.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49A882D700000001D58A1 /* BrowserPreferencesStore.m */; };
 		A1B49A8C2D700010001D58A1 /* BrowserTabCoordinator.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49A8B2D700010001D58A1 /* BrowserTabCoordinator.m */; };
 		A1B49A8F2D700020001D58A1 /* BrowserTabOverviewController.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49A8E2D700020001D58A1 /* BrowserTabOverviewController.m */; };
+		A1B49C032E900030001D58A1 /* BrowserFavoritesHomeController.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49C022E900030001D58A1 /* BrowserFavoritesHomeController.m */; };
 		A1B49A922D700030001D58A1 /* BrowserPageActionCoordinator.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49A912D700030001D58A1 /* BrowserPageActionCoordinator.m */; };
 		A1B49A952D700040001D58A1 /* BrowserRemoteInputController.m in Sources */ = {isa = PBXBuildFile; fileRef = A1B49A942D700040001D58A1 /* BrowserRemoteInputController.m */; };
 		B002B8671BAE420500C744AF /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = B002B8661BAE420500C744AF /* main.m */; };
@@ -106,6 +107,8 @@
 		A1B49A8B2D700010001D58A1 /* BrowserTabCoordinator.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserTabCoordinator.m; sourceTree = "<group>"; };
 		A1B49A8D2D700020001D58A1 /* BrowserTabOverviewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BrowserTabOverviewController.h; sourceTree = "<group>"; };
 		A1B49A8E2D700020001D58A1 /* BrowserTabOverviewController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserTabOverviewController.m; sourceTree = "<group>"; };
+		A1B49C012E900030001D58A1 /* BrowserFavoritesHomeController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BrowserFavoritesHomeController.h; sourceTree = "<group>"; };
+		A1B49C022E900030001D58A1 /* BrowserFavoritesHomeController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserFavoritesHomeController.m; sourceTree = "<group>"; };
 		A1B49A902D700030001D58A1 /* BrowserPageActionCoordinator.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BrowserPageActionCoordinator.h; sourceTree = "<group>"; };
 		A1B49A912D700030001D58A1 /* BrowserPageActionCoordinator.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = BrowserPageActionCoordinator.m; sourceTree = "<group>"; };
 		A1B49A932D700040001D58A1 /* BrowserRemoteInputController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BrowserRemoteInputController.h; sourceTree = "<group>"; };
@@ -203,6 +206,8 @@
 				A1B49A8B2D700010001D58A1 /* BrowserTabCoordinator.m */,
 				A1B49A8D2D700020001D58A1 /* BrowserTabOverviewController.h */,
 				A1B49A8E2D700020001D58A1 /* BrowserTabOverviewController.m */,
+				A1B49C012E900030001D58A1 /* BrowserFavoritesHomeController.h */,
+				A1B49C022E900030001D58A1 /* BrowserFavoritesHomeController.m */,
 				A1B49A852D6D2000001D58A1 /* BrowserVideoPlaybackCoordinator.h */,
 				A1B49A862D6D2000001D58A1 /* BrowserVideoPlaybackCoordinator.m */,
 			);
@@ -436,6 +441,7 @@
 				A1B49A952D700040001D58A1 /* BrowserRemoteInputController.m in Sources */,
 				A1B49A8C2D700010001D58A1 /* BrowserTabCoordinator.m in Sources */,
 				A1B49A8F2D700020001D58A1 /* BrowserTabOverviewController.m in Sources */,
+				A1B49C032E900030001D58A1 /* BrowserFavoritesHomeController.m in Sources */,
 				A1B49A872D6D2000001D58A1 /* BrowserVideoPlaybackCoordinator.m in Sources */,
 				A1B49A842D6D2000001D58A1 /* BrowserDOMInteractionService.m in Sources */,
 				A1B49A4E2D680900001D58A1 /* BrowserNavigationService.m in Sources */,

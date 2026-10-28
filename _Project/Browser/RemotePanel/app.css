@@ -94,6 +94,15 @@ label.check input, label.radio input { width: 20px; height: 20px; accent-color: 
 .list li.editing { flex-wrap: wrap; }
 .add-form { display: flex; flex-direction: column; gap: 8px; }
 
+/* Now playing */
+.media-source { font-size: 13px; color: var(--muted); }
+.media-title { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#mediaSeek { width: 100%; margin: 0; accent-color: var(--accent); }
+.media-times { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: -6px; }
+.media-controls { gap: 8px; }
+.media-controls button { min-width: 0; padding: 0 4px; }
+.media-controls #mediaToggle { flex: 1.4; font-size: 18px; }
+
 /* Trackpad */
 .pad {
   min-height: 260px; border-radius: 16px; border: 1px dashed var(--line);
@@ -104,6 +113,7 @@ label.check input, label.radio input { width: 20px; height: 20px; accent-color: 
 }
 .pad.hover-mode { cursor: crosshair; }
 .pad.locked { border-style: solid; border-color: var(--accent); cursor: none; color: var(--text); }
+.pad-head { display: flex; align-items: center; gap: 12px; }
 .pad-status { font-size: 13px; color: var(--warn); }
 .pad-status.on { color: #30D158; }
 .pad-controls { align-items: center; flex-wrap: wrap; }

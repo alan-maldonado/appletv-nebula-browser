@@ -14,6 +14,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)webView:(id _Nonnull)webView requestsPresentingAlertController:(UIAlertController * _Nonnull)alertController;
 // The page requested video fullscreen (info keys: src, time, title).
 - (void)webView:(id _Nonnull)webView didRequestFullscreenWithVideoInfo:(NSDictionary * _Nonnull)videoInfo;
+// Nebula Remote: the page's active <video> changed (keys: id, title, time, duration,
+// playing, rate; or id + gone). frame is the WKFrameInfo it came from, for
+// evaluateJavaScriptStringAsync:inFrame:.
+- (void)webView:(id _Nonnull)webView didUpdateMediaState:(NSDictionary * _Nonnull)mediaState frame:(id _Nullable)frame;
 
 @end
 
@@ -38,6 +42,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable NSString *)stringByEvaluatingJavaScriptFromString:(NSString * _Nonnull)script;
 // Fire-and-forget variant: does not block the main thread; use when the result is unused.
 - (void)evaluateJavaScriptStringAsync:(NSString * _Nonnull)script;
+// Same, inside a specific frame (a WKFrameInfo from a script message); main frame when nil.
+- (void)evaluateJavaScriptStringAsync:(NSString * _Nonnull)script inFrame:(id _Nullable)frame;
 // Non-blocking variant that delivers the string result on the main queue. Use from
 // event-handling paths (touchesMoved, presses): the synchronous variant pumps a nested
 // run loop, and UIKit traps if it re-enters -[UIApplication sendEvent:] from there.

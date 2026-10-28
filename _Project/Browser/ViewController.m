@@ -13,6 +13,8 @@
 #import "BrowserPreferencesStore.h"
 #import "BrowserRemoteInputController.h"
 #import "BrowserFavoritesStore.h"
+#import "BrowserFavoritesHomeController.h"
+#import "BrowserNativeVideoPlayerViewController.h"
 #import "BrowserRemoteHTTP.h"
 #import "BrowserRemoteServer.h"
 #import "BrowserRemoteState.h"
@@ -312,7 +314,7 @@ static UIColor *kTextColor(void) {
 
 @end
 
-@interface ViewController () <BrowserMenuCoordinatorHost, BrowserPageActionCoordinatorHost, BrowserRemoteInputControllerHost, BrowserRemoteServerDelegate, BrowserTabCoordinatorHost, BrowserTabOverviewControllerHost, BrowserTopBarViewDelegate, BrowserVideoPlaybackCoordinatorHost>
+@interface ViewController () <BrowserFavoritesHomeControllerHost, BrowserMenuCoordinatorHost, BrowserPageActionCoordinatorHost, BrowserRemoteInputControllerHost, BrowserRemoteServerDelegate, BrowserTabCoordinatorHost, BrowserTabOverviewControllerHost, BrowserTopBarViewDelegate, BrowserVideoPlaybackCoordinatorHost>
 
 @property (nonatomic) BrowserDOMInteractionService *domInteractionService;
 @property (nonatomic) BrowserMenuCoordinator *menuCoordinator;
@@ -325,8 +327,16 @@ static UIColor *kTextColor(void) {
 // The "Enter URL or Search" keyboard, published to Nebula Remote while it is up.
 @property (nonatomic, weak) BrowserURLInputViewController *remoteAddressInputViewController;
 @property (nonatomic, copy) NSString *remoteAddressFieldID;
+// Now playing on the panel: the native player while it's up, else the active tab's <video>.
+@property (nonatomic, weak) BrowserNativeVideoPlayerViewController *remoteNativePlayer;
+@property (nonatomic, copy) NSDictionary *remotePageMedia;
+@property (nonatomic, weak) BrowserWebView *remotePageMediaWebView;
+@property (nonatomic, strong) id remotePageMediaFrame;
 @property (nonatomic) BrowserTabCoordinator *tabCoordinator;
 @property (nonatomic) BrowserTabOverviewController *tabOverviewController;
+@property (nonatomic) BrowserFavoritesHomeController *favoritesHomeController;
+// The Favorites home was requested before the view was on screen (launch); shown in viewDidAppear.
+@property (nonatomic) BOOL favoritesHomePending;
 @property (nonatomic) BrowserVideoPlaybackCoordinator *videoPlaybackCoordinator;
 @property (nonatomic) BrowserViewModel *viewModel;
 @property (nonatomic) BOOL displayedHintsOnLaunch;
@@ -385,6 +395,7 @@ static UIColor *kTextColor(void) {
                                                manualScrollPanRecognizer:self.remoteInputController.manualScrollPanRecognizer
                                                            webViewDelegate:self
                                                        scrollViewAllowBounces:self.scrollViewAllowBounces];
+    self.favoritesHomeController = [[BrowserFavoritesHomeController alloc] initWithHost:self];
     self.tabOverviewController = [[BrowserTabOverviewController alloc] initWithHost:self
                                                                             viewModel:self.viewModel
                                                                              rootView:self.view
@@ -439,6 +450,13 @@ static UIColor *kTextColor(void) {
             [self showHintsAlert];
         } else {
             [self maybeShowDonateOnLaunch];
+        }
+    }
+    if (self.favoritesHomePending) {
+        self.favoritesHomePending = NO;
+        // The launch guide wins; Home is a press away after it.
+        if (self.presentedViewController == nil) {
+            [self.favoritesHomeController show];
         }
     }
 }
@@ -890,6 +908,14 @@ static UIColor *kTextColor(void) {
 
 - (void)browserPresentViewController:(UIViewController *)viewController {
     [self deactivateTopBarFocusMode];
+    if ([viewController isKindOfClass:[BrowserNativeVideoPlayerViewController class]]) {
+        BrowserNativeVideoPlayerViewController *player = (BrowserNativeVideoPlayerViewController *)viewController;
+        __weak typeof(self) weakSelf = self;
+        player.remoteMediaStateDidChange = ^{
+            [weakSelf publishRemoteMedia];
+        };
+        self.remoteNativePlayer = player;
+    }
     [self presentViewController:viewController animated:YES completion:nil];
 }
 
@@ -1019,6 +1045,50 @@ static UIColor *kTextColor(void) {
     return self.remoteInputController.cursorModeEnabled;
 }
 
+- (BOOL)browserTabCoordinatorShouldShowFavoritesHome {
+    return self.preferencesStore.favoritesHomePageEnabled;
+}
+
+- (void)browserTabCoordinatorShowFavoritesHome {
+    if (self.view.window == nil) {
+        self.favoritesHomePending = YES;
+        return;
+    }
+    [self deactivateTopBarFocusMode];
+    [self.favoritesHomeController show];
+}
+
+#pragma mark - BrowserFavoritesHomeControllerHost
+
+- (BOOL)browserFavoritesHomeControllerCursorModeEnabled {
+    return self.remoteInputController.cursorModeEnabled;
+}
+
+- (void)browserFavoritesHomeControllerSetCursorModeEnabled:(BOOL)enabled {
+    [self.remoteInputController setCursorModeEnabled:enabled];
+}
+
+- (void)browserFavoritesHomeControllerPresentViewController:(UIViewController *)viewController {
+    [self presentViewController:viewController animated:YES completion:nil];
+}
+
+- (UIColor *)browserFavoritesHomeControllerAccentColor {
+    return self.preferencesStore.themeAccentColor;
+}
+
+- (void)browserFavoritesHomeControllerOpenURLString:(NSString *)URLString inNewTab:(BOOL)newTab {
+    NSURLRequest *request = [self.navigationService requestForURLString:URLString];
+    if (request == nil) {
+        return;
+    }
+    [self.pageActionCoordinator discardActiveEditableField];
+    if (newTab) {
+        [self.tabCoordinator createNewTabWithRequest:request];
+    } else {
+        [self.webview loadRequest:request];
+    }
+}
+
 - (BOOL)browserTabCoordinatorIsTabOverviewVisible {
     return self.tabOverviewController.visible;
 }
@@ -1145,7 +1215,8 @@ static UIColor *kTextColor(void) {
             // Only accept a video whose box actually contains the tap point, so
             // double-tapping elsewhere on the page doesn't grab a far-off video.
             "if(a.tagName==='VIDEO'&&covers(a)){v=a;break;}"
-            "if(a.querySelector){var q=a.querySelector('video');if(covers(q)){v=q;break;}}"
+            // A player wrapper can hold several videos: take the one under the point, not the first.
+            "if(a.querySelectorAll){var qs=a.querySelectorAll('video');for(var i=0;i<qs.length;i++){if(covers(qs[i])){v=qs[i];break;}}if(v){break;}}"
             "a=a.parentElement;"
         "}"
         "if(!v){return 'false';}"
@@ -1378,8 +1449,85 @@ static UIColor *kTextColor(void) {
     if ([action isEqualToString:@"home"]) {
         return [self performRemoteHomeAction:payload response:outResponse];
     }
+    if ([action isEqualToString:@"media"]) {
+        return [self performRemoteMediaCommand:payload response:outResponse];
+    }
     *outResponse = @{@"error": @"invalid-request"};
     return 400;
+}
+
+- (NSInteger)performRemoteMediaCommand:(NSDictionary *)payload response:(NSDictionary **)outResponse {
+    NSString *command = payload[@"command"];
+    BrowserNativeVideoPlayerViewController *player = self.remoteNativePlayer;
+    if (player.remoteMediaState != nil) {
+        if ([command isEqualToString:@"toggle"]) {
+            [player remoteTogglePlayback];
+        } else if ([command isEqualToString:@"play"]) {
+            [player remotePlay];
+        } else if ([command isEqualToString:@"pause"]) {
+            [player remotePause];
+        } else if ([command isEqualToString:@"exit-fullscreen"]) {
+            [player remoteClose];
+        } else if ([command isEqualToString:@"seek"]) {
+            [player remoteSeekToTime:[payload[@"time"] doubleValue]];
+        } else {
+            [player remoteSkipByInterval:[payload[@"delta"] doubleValue]];
+        }
+        return 200;
+    }
+    if ([self currentRemotePageMedia] != nil) {
+        NSData *JSON = [NSJSONSerialization dataWithJSONObject:payload options:0 error:NULL];
+        NSString *argument = [[NSString alloc] initWithData:JSON encoding:NSUTF8StringEncoding];
+        NSString *script = [NSString stringWithFormat:@"window.__browserMediaCommand && window.__browserMediaCommand(%@);", argument];
+        [self.webview evaluateJavaScriptStringAsync:script inFrame:self.remotePageMediaFrame];
+        return 200;
+    }
+    *outResponse = @{@"error": @"no-media"};
+    return 409;
+}
+
+// The page video only counts while its tab is the active one.
+- (NSDictionary *)currentRemotePageMedia {
+    return self.remotePageMediaWebView != nil && self.remotePageMediaWebView == self.webview ? self.remotePageMedia : nil;
+}
+
+- (void)publishRemoteMedia {
+    NSDictionary *media = self.remoteNativePlayer.remoteMediaState;
+    if (media == nil) {
+        NSDictionary *pageMedia = [self currentRemotePageMedia];
+        if (pageMedia != nil) {
+            // Bare media files (an .mp4 opened directly) have no title: fall back to the file name.
+            NSString *title = [pageMedia[@"title"] isKindOfClass:[NSString class]] ? pageMedia[@"title"] : @"";
+            if (title.length == 0) {
+                title = self.webview.title.length > 0 ? self.webview.title : (self.webview.request.URL.lastPathComponent ?: @"");
+            }
+            double duration = [pageMedia[@"duration"] respondsToSelector:@selector(doubleValue)] ? [pageMedia[@"duration"] doubleValue] : -1.0;
+            media = @{
+                @"source": @"page",
+                @"title": title,
+                @"time": @([pageMedia[@"time"] respondsToSelector:@selector(doubleValue)] ? [pageMedia[@"time"] doubleValue] : 0.0),
+                @"duration": duration > 0.0 ? @(duration) : NSNull.null,
+                @"playing": @([pageMedia[@"playing"] respondsToSelector:@selector(boolValue)] && [pageMedia[@"playing"] boolValue]),
+                @"rate": @([pageMedia[@"rate"] respondsToSelector:@selector(doubleValue)] ? [pageMedia[@"rate"] doubleValue] : 1.0),
+                @"fullscreen": @([pageMedia[@"fullscreen"] respondsToSelector:@selector(boolValue)] && [pageMedia[@"fullscreen"] boolValue]),
+            };
+        }
+    }
+    NSUInteger previousVersion = self.remoteServer.state.version;
+    [self.remoteServer.state updateMedia:media now:NSProcessInfo.processInfo.systemUptime];
+    if (self.remoteServer.state.version != previousVersion) {
+        [self.remoteServer stateDidChange];
+    }
+}
+
+- (void)clearRemotePageMediaForWebView:(id)webView {
+    if (webView != self.remotePageMediaWebView) {
+        return;
+    }
+    self.remotePageMedia = nil;
+    self.remotePageMediaWebView = nil;
+    self.remotePageMediaFrame = nil;
+    [self publishRemoteMedia];
 }
 
 - (NSInteger)performRemoteHomeAction:(NSDictionary *)payload response:(NSDictionary **)outResponse {
@@ -1396,6 +1544,9 @@ static UIColor *kTextColor(void) {
     }
     if (payload[@"launch"] != nil) {
         self.preferencesStore.launchPageMode = [payload[@"launch"] isEqualToString:@"home-page"] ? 1 : 0;
+    }
+    if (payload[@"favorites"] != nil) {
+        self.preferencesStore.favoritesHomePageEnabled = [payload[@"favorites"] boolValue];
     }
     // NSUserDefaultsDidChangeNotification republishes too; do it now so the reply's state is current.
     [self publishRemoteState];
@@ -1579,6 +1730,7 @@ static UIColor *kTextColor(void) {
     [state updateHome:@{
         @"url": self.preferencesStore.homePageURLString ?: @"",
         @"launch": self.preferencesStore.launchPageMode == 1 ? @"home-page" : @"last-session",
+        @"favorites": @(self.preferencesStore.favoritesHomePageEnabled),
     }];
 
     // The panel follows the TV's theme accent; light accents (Classic, Gold, Sky) get dark text.
@@ -1592,6 +1744,8 @@ static UIColor *kTextColor(void) {
     if (state.version != previousVersion) {
         [self.remoteServer stateDidChange];
     }
+    // Separate: it compares versions itself. Covers tab switches (page media is per tab).
+    [self publishRemoteMedia];
 }
 
 - (void)handleUserDefaultsDidChange:(NSNotification *)notification {
@@ -1657,8 +1811,40 @@ static UIColor *kTextColor(void) {
     [self.videoPlaybackCoordinator handlePageFullscreenRequestWithInfo:videoInfo];
 }
 
+- (void)webView:(id)webView didUpdateMediaState:(NSDictionary *)mediaState frame:(id)frame {
+    NSString *identifier = [mediaState[@"id"] isKindOfClass:[NSString class]] ? mediaState[@"id"] : nil;
+    if (identifier == nil) {
+        return;
+    }
+    BOOL sameSource = webView == self.remotePageMediaWebView && [identifier isEqualToString:self.remotePageMedia[@"id"]];
+    if ([mediaState[@"gone"] boolValue]) {
+        if (sameSource) {
+            [self clearRemotePageMediaForWebView:webView];
+        }
+        return;
+    }
+    if (webView != self.webview) {
+        return; // background tabs don't drive the panel
+    }
+    // Another frame takes over only by starting to play.
+    BOOL playing = [mediaState[@"playing"] respondsToSelector:@selector(boolValue)] && [mediaState[@"playing"] boolValue];
+    if (!sameSource && !playing && [self currentRemotePageMedia] != nil) {
+        return;
+    }
+    self.remotePageMedia = mediaState;
+    self.remotePageMediaWebView = webView;
+    self.remotePageMediaFrame = frame;
+    [self publishRemoteMedia];
+}
+
 - (void)webViewDidStartLoad:(id)webView {
     [self.tabCoordinator webViewDidStartLoad:webView];
+    // Something else (Nebula Remote, a redirect) navigated the tab under the Favorites home.
+    if (webView == self.webview && self.favoritesHomeController.visible) {
+        [self.favoritesHomeController dismiss];
+    }
+    // A main-frame navigation leaves the old page's video behind.
+    [self clearRemotePageMediaForWebView:webView];
 }
 
 - (void)webViewDidFinishLoad:(id)webView {

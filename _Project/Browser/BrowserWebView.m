@@ -64,6 +64,7 @@
 
 static NSString * const kBrowserWebViewClassName = @"WKWebView";
 static NSString * const kBrowserFullscreenMessageHandlerName = @"browserFullscreen";
+static NSString * const kBrowserMediaMessageHandlerName = @"browserMedia";
 static NSString * const kBrowserWebViewConfigurationClassName = @"WKWebViewConfiguration";
 static NSString * const kBrowserWebsiteDataStoreClassName = @"WKWebsiteDataStore";
 static NSString * const kBrowserUserContentControllerClassName = @"WKUserContentController";
@@ -584,10 +585,56 @@ static NSString *BrowserFakeFullscreenScript(void) {
             "fireEvent(document, 'webkitfullscreenchange');"
         "}"
         "var pendingElement = null;"
+        // What the last click hit: a container with several videos (a multiview grid)
+        // fullscreens the clicked tile's video, not the first in the DOM. Clicks
+        // activated without coordinates (element.click(), 0,0) still carry a target.
+        "var lastPointer = null;"
+        "var lastTarget = null;"
+        "['pointerdown', 'mousedown', 'click'].forEach(function(type) {"
+            "document.addEventListener(type, function(event) {"
+                "lastTarget = event.target;"
+                "lastPointer = (event.clientX || event.clientY) ? { x: event.clientX, y: event.clientY } : null;"
+            "}, true);"
+        "});"
+        "function largestVideo(list) {"
+            "var best = list[0], bestArea = -1;"
+            "for (var i = 0; i < list.length; i++) {"
+                "var r = list[i].getBoundingClientRect();"
+                "if (r.width * r.height > bestArea) { bestArea = r.width * r.height; best = list[i]; }"
+            "}"
+            "return best;"
+        "}"
+        "function videoForElement(element) {"
+            "if (element.tagName === 'VIDEO') { return element; }"
+            "var videos = element.querySelectorAll('video');"
+            "if (videos.length <= 1) { return videos[0] || null; }"
+            // Walk up from the clicked control to the first ancestor holding exactly one video: its tile.
+            "if (lastTarget && element.contains(lastTarget)) {"
+                "for (var node = lastTarget; node && node !== element; node = node.parentElement) {"
+                    "if (node.tagName === 'VIDEO') { return node; }"
+                    "var inside = node.querySelectorAll ? node.querySelectorAll('video') : [];"
+                    "if (inside.length === 1) { return inside[0]; }"
+                    // A tile with extras (avatar clips): its biggest video is the stream.
+                    "if (inside.length > 1) { return largestVideo(inside); }"
+                "}"
+            "}"
+            "if (lastPointer) {"
+                "var best = null, bestDistance = Infinity;"
+                "for (var i = 0; i < videos.length; i++) {"
+                    "var rect = videos[i].getBoundingClientRect();"
+                    "var dx = Math.max(rect.left - lastPointer.x, 0, lastPointer.x - rect.right);"
+                    "var dy = Math.max(rect.top - lastPointer.y, 0, lastPointer.y - rect.bottom);"
+                    "var distance = Math.sqrt(dx * dx + dy * dy);"
+                    "if (distance < bestDistance) { bestDistance = distance; best = videos[i]; }"
+                "}"
+                "if (best) { return best; }"
+            "}"
+            "return videos[0];"
+        "}"
         "function requestNativeFullscreen(element) {"
             "if (!element) { return; }"
             "pendingElement = element;"
-            "var video = (element.tagName === 'VIDEO') ? element : element.querySelector('video');"
+            "var video = videoForElement(element);"
             "var src = '';"
             "var time = 0;"
             "if (video) {"
@@ -667,6 +714,78 @@ static NSString *BrowserFakeFullscreenScript(void) {
             "Object.defineProperty(Document.prototype, 'fullscreenEnabled', { get: function() { return true; }, configurable: true });"
             "Object.defineProperty(Document.prototype, 'webkitFullscreenEnabled', { get: function() { return true; }, configurable: true });"
         "} catch (e) {}"
+    "})();";
+}
+
+// Nebula Remote: reports the frame's active <video> (the last one that started
+// playing, ignoring small muted loops like hover previews) to the browserMedia
+// handler, and takes play/pause/seek commands via __browserMediaCommand. Runs in
+// every frame; the native side tracks which frame owns the current video.
+static NSString *BrowserMediaBridgeScript(void) {
+    return
+    @"(function(){"
+        "if (window.__browserMediaBridgeInstalled) { return; }"
+        "window.__browserMediaBridgeInstalled = true;"
+        "var handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.browserMedia;"
+        "if (!handler) { return; }"
+        "var frameID = Math.random().toString(36).slice(2);"
+        "var current = null;"
+        "var lastPost = 0;"
+        "function eligible(video) {"
+            "if (!video || video.tagName !== 'VIDEO') { return false; }"
+            "var rect = video.getBoundingClientRect();"
+            "if (rect.width < 200 || rect.height < 112) { return false; }"
+            "return !(video.muted && video.loop);"
+        "}"
+        "function post(video) {"
+            "lastPost = Date.now();"
+            "var duration = video.duration;"
+            "try {"
+                "handler.postMessage({"
+                    "id: frameID,"
+                    "title: String(document.title || ''),"
+                    "time: video.currentTime || 0,"
+                    "duration: isFinite(duration) ? duration : -1,"
+                    "playing: !video.paused && !video.ended && video.readyState >= 3,"
+                    "fullscreen: !!document.fullscreenElement,"
+                    "rate: video.playbackRate || 1"
+                "});"
+            "} catch (e) {}"
+        "}"
+        "function gone() {"
+            "current = null;"
+            "try { handler.postMessage({ id: frameID, gone: true }); } catch (e) {}"
+        "}"
+        "function onEvent(event) {"
+            "var video = event.target;"
+            "if (video !== current) {"
+                "if ((event.type !== 'play' && event.type !== 'playing') || !eligible(video)) { return; }"
+                "current = video;"
+            "}"
+            "if (event.type === 'emptied') { gone(); return; }"
+            // timeupdate fires ~4x/s; the native side extrapolates, so a heartbeat is enough.
+            "if (event.type === 'timeupdate' && Date.now() - lastPost < 2000) { return; }"
+            "post(video);"
+        "}"
+        "['play', 'playing', 'pause', 'waiting', 'seeked', 'ratechange', 'durationchange', 'ended', 'emptied', 'timeupdate'].forEach(function(type) {"
+            "document.addEventListener(type, onEvent, true);"
+        "});"
+        "setInterval(function() { if (current && !current.isConnected) { gone(); } }, 3000);"
+        "document.addEventListener('fullscreenchange', function() { if (current) { post(current); } }, true);"
+        "window.addEventListener('pagehide', function() { if (current) { gone(); } });"
+        "window.__browserMediaCommand = function(command) {"
+            "var video = current;"
+            "if (!video) { return; }"
+            "if (command.command === 'toggle') { if (video.paused || video.ended) { video.play(); } else { video.pause(); } }"
+            "else if (command.command === 'play') { video.play(); }"
+            "else if (command.command === 'pause') { video.pause(); }"
+            "else if (command.command === 'exit-fullscreen') { if (document.exitFullscreen) { document.exitFullscreen(); } setTimeout(function() { post(video); }, 0); }"
+            "else if (command.command === 'seek' || command.command === 'skip') {"
+                "var target = command.command === 'seek' ? command.time : video.currentTime + command.delta;"
+                "var end = isFinite(video.duration) ? Math.max(0, video.duration - 0.05) : Infinity;"
+                "video.currentTime = Math.min(Math.max(0, target), end);"
+            "}"
+        "};"
     "})();";
 }
 
@@ -804,9 +923,15 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
     if (configuration != nil && [configuration respondsToSelector:mediaTypesSelector]) {
         ((void (*)(id, SEL, NSUInteger))objc_msgSend)(configuration, mediaTypesSelector, 0); // WKAudiovisualMediaTypeNone
     }
+    SEL websiteDataStoreSelector = NSSelectorFromString(@"setWebsiteDataStore:");
+    id websiteDataStore = [BrowserWebView defaultWebsiteDataStore];
+    if (configuration != nil && websiteDataStore != nil && [configuration respondsToSelector:websiteDataStoreSelector]) {
+        ((void (*)(id, SEL, id))objc_msgSend)(configuration, websiteDataStoreSelector, websiteDataStore);
+    }
     BrowserConfigurePrivateMediaPreferences(configuration);
     BrowserInstallYouTubeCaptureUserScript(configuration);
     BrowserInstallUserScriptSource(configuration, BrowserFakeFullscreenScript());
+    BrowserInstallUserScriptSource(configuration, BrowserMediaBridgeScript());
     [self installFullscreenScriptMessageHandlerOnConfiguration:configuration];
 
     id webViewObject = ((id (*)(id, SEL))objc_msgSend)((id)webViewClass, @selector(alloc));
@@ -966,6 +1091,21 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
         return;
     }
     ((void (*)(id, SEL, id, id))objc_msgSend)(self.runtimeWebView, selector, script, (id)nil);
+}
+
+- (void)evaluateJavaScriptStringAsync:(NSString *)script inFrame:(id)frame {
+    // WKWebView evaluateJavaScript:inFrame:inContentWorld:completionHandler: (user
+    // scripts live in the page world); main frame when unavailable.
+    SEL selector = NSSelectorFromString(@"evaluateJavaScript:inFrame:inContentWorld:completionHandler:");
+    Class contentWorldClass = NSClassFromString(@"WKContentWorld");
+    SEL pageWorldSelector = NSSelectorFromString(@"pageWorld");
+    if (frame == nil || self.runtimeWebView == nil || script.length == 0 ||
+        ![self.runtimeWebView respondsToSelector:selector] || ![contentWorldClass respondsToSelector:pageWorldSelector]) {
+        [self evaluateJavaScriptStringAsync:script];
+        return;
+    }
+    id pageWorld = ((id (*)(id, SEL))objc_msgSend)((id)contentWorldClass, pageWorldSelector);
+    ((void (*)(id, SEL, id, id, id, id))objc_msgSend)(self.runtimeWebView, selector, script, frame, pageWorld, (id)nil);
 }
 
 - (void)evaluateJavaScriptString:(NSString *)script completion:(void (^)(NSString *))completion {
@@ -1294,6 +1434,7 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
     forwarder.target = self;
     self.fullscreenMessageForwarder = forwarder;
     ((void (*)(id, SEL, id, id))objc_msgSend)(userContentController, addHandlerSelector, forwarder, kBrowserFullscreenMessageHandlerName);
+    ((void (*)(id, SEL, id, id))objc_msgSend)(userContentController, addHandlerSelector, forwarder, kBrowserMediaMessageHandlerName);
 }
 
 - (void)userContentController:(id)userContentController didReceiveScriptMessage:(id)message {
@@ -1304,11 +1445,19 @@ static void BrowserInstallYouTubeCaptureUserScript(id configuration) {
         return;
     }
     NSString *name = ((id (*)(id, SEL))objc_msgSend)(message, nameSelector);
-    if (![name isEqualToString:kBrowserFullscreenMessageHandlerName]) {
-        return;
-    }
     id body = ((id (*)(id, SEL))objc_msgSend)(message, bodySelector);
     if (![body isKindOfClass:[NSDictionary class]]) {
+        return;
+    }
+    if ([name isEqualToString:kBrowserMediaMessageHandlerName]) {
+        SEL frameInfoSelector = NSSelectorFromString(@"frameInfo");
+        id frame = [message respondsToSelector:frameInfoSelector] ? ((id (*)(id, SEL))objc_msgSend)(message, frameInfoSelector) : nil;
+        if ([self.delegate respondsToSelector:@selector(webView:didUpdateMediaState:frame:)]) {
+            [self.delegate webView:self didUpdateMediaState:body frame:frame];
+        }
+        return;
+    }
+    if (![name isEqualToString:kBrowserFullscreenMessageHandlerName]) {
         return;
     }
     NSLog(@"[NativeVideoPlayer] page fullscreen message received: %@", body);
@@ -1452,8 +1601,55 @@ windowFeatures:(id)windowFeatures {
     return nil;
 }
 
+// tvOS WebKit's default store keeps localStorage/IndexedDB in memory only (no
+// WebsiteData directory is ever written), so sites that keep their login there
+// sign out on every relaunch. Build one store whose web storage lives under
+// Library/Caches (the writable, persistent-unless-purged area on tvOS) and use
+// it for every web view and for cookie save/restore.
+static void BrowserSetDataStoreDirectory(id configuration, NSString *selectorName, NSURL *directory, NSMutableArray<NSString *> *applied) {
+    SEL selector = NSSelectorFromString(selectorName);
+    if (![configuration respondsToSelector:selector]) {
+        return;
+    }
+    [[NSFileManager defaultManager] createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:NULL];
+    ((void (*)(id, SEL, id))objc_msgSend)(configuration, selector, directory);
+    [applied addObject:selectorName];
+}
+
+static id BrowserCreatePersistentWebsiteDataStore(void) {
+    Class dataStoreClass = NSClassFromString(kBrowserWebsiteDataStoreClassName);
+    Class configurationClass = NSClassFromString(@"_WKWebsiteDataStoreConfiguration");
+    SEL initWithConfiguration = NSSelectorFromString(@"_initWithConfiguration:");
+    if (dataStoreClass == Nil || configurationClass == Nil || ![dataStoreClass instancesRespondToSelector:initWithConfiguration]) {
+        return nil;
+    }
+    NSURL *caches = [[NSFileManager defaultManager] URLsForDirectory:NSCachesDirectory inDomains:NSUserDomainMask].firstObject;
+    NSURL *root = [caches URLByAppendingPathComponent:@"NebulaWebsiteData" isDirectory:YES];
+    id configuration = ((id (*)(id, SEL))objc_msgSend)((id)configurationClass, @selector(new));
+    NSMutableArray<NSString *> *applied = [NSMutableArray array];
+    BrowserSetDataStoreDirectory(configuration, @"setGeneralStorageDirectory:", [root URLByAppendingPathComponent:@"General" isDirectory:YES], applied);
+    BrowserSetDataStoreDirectory(configuration, @"_setWebStorageDirectory:", [root URLByAppendingPathComponent:@"LocalStorage" isDirectory:YES], applied);
+    BrowserSetDataStoreDirectory(configuration, @"_setIndexedDBDatabaseDirectory:", [root URLByAppendingPathComponent:@"IndexedDB" isDirectory:YES], applied);
+    BrowserSetDataStoreDirectory(configuration, @"_setServiceWorkerRegistrationDirectory:", [root URLByAppendingPathComponent:@"ServiceWorkers" isDirectory:YES], applied);
+    BrowserSetDataStoreDirectory(configuration, @"_setResourceLoadStatisticsDirectory:", [root URLByAppendingPathComponent:@"ResourceLoadStatistics" isDirectory:YES], applied);
+    if (applied.count == 0) {
+        return nil;
+    }
+    id dataStore = ((id (*)(id, SEL))objc_msgSend)((id)dataStoreClass, @selector(alloc));
+    dataStore = ((id (*)(id, SEL, id))objc_msgSend)(dataStore, initWithConfiguration, configuration);
+    return dataStore;
+}
+
 + (id)defaultWebsiteDataStore {
     BrowserEnsureWebKitRuntimeLoaded();
+    static id sharedDataStore;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        sharedDataStore = BrowserCreatePersistentWebsiteDataStore();
+    });
+    if (sharedDataStore != nil) {
+        return sharedDataStore;
+    }
     Class dataStoreClass = NSClassFromString(kBrowserWebsiteDataStoreClassName);
     SEL selector = NSSelectorFromString(@"defaultDataStore");
     if (dataStoreClass == Nil || ![dataStoreClass respondsToSelector:selector]) {

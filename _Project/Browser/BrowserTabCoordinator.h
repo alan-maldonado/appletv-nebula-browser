@@ -20,6 +20,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)browserTabCoordinatorIsTabOverviewVisible;
 // The active tab's URL/title UI was refreshed (load finished, tab switched).
 - (void)browserTabCoordinatorActiveTabDidRefresh;
+// "Favorites as Home Page": the active tab's home load shows the Favorites grid instead.
+- (BOOL)browserTabCoordinatorShouldShowFavoritesHome;
+- (void)browserTabCoordinatorShowFavoritesHome;
 
 @end
 

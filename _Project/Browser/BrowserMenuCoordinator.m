@@ -1170,6 +1170,25 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
     }];
 }
 
+- (BrowserAdvancedMenuItem *)favoritesHomePageToggleMenuItem {
+    NSString *(^titleForState)(BOOL) = ^NSString *(BOOL enabled) {
+        return enabled ? @"Favorites as Home Page: On" : @"Favorites as Home Page: Off";
+    };
+    BrowserPreferencesStore *preferencesStore = self.preferencesStore;
+    BrowserAdvancedMenuItem *item = [self advancedMenuItemWithTitle:titleForState(preferencesStore.favoritesHomePageEnabled)
+                                                              style:UIAlertActionStyleDefault
+                                                            handler:^{
+        preferencesStore.favoritesHomePageEnabled = !preferencesStore.favoritesHomePageEnabled;
+    }];
+    item.adjustHandler = ^NSString *(__unused NSInteger direction) {
+        BOOL next = !preferencesStore.favoritesHomePageEnabled;
+        preferencesStore.favoritesHomePageEnabled = next;
+        return titleForState(next);
+    };
+    item.explanation = @"When On, Go To Home Page, new tabs and On Launch: Home Page show all your Favorites instead of loading the home page.";
+    return item;
+}
+
 - (BrowserAdvancedMenuItem *)setCurrentPageAsHomePageMenuItem {
     return [self advancedMenuItemWithTitle:@"Set Current Page As Home Page"
                                      style:UIAlertActionStyleDefault
@@ -1501,6 +1520,7 @@ withAnimationCoordinator:(UIFocusAnimationCoordinator *)coordinator {
                                                items:@[
             [self homePageMenuItem],
             [self setCurrentPageAsHomePageMenuItem],
+            [self favoritesHomePageToggleMenuItem],
             [self favoritesMenuItem],
             [self historyMenuItem],
             [self showTabsMenuItem],

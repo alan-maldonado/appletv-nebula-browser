@@ -109,6 +109,10 @@ BOOL BrowserRemoteRequestHasTrustedHost(BrowserRemoteRequest *request) {
     if ([host isEqualToString:@"localhost"] || [host hasSuffix:@".local"]) {
         return YES;
     }
+    // Names served by the LAN reverse proxy (nginx on zima).
+    if ([host hasSuffix:@".lan"] || [host hasSuffix:@".orbitware.app"]) {
+        return YES;
+    }
     NSCharacterSet *notIPv4 = [[NSCharacterSet characterSetWithCharactersInString:@"0123456789."] invertedSet];
     return [host rangeOfCharacterFromSet:notIPv4].location == NSNotFound && [host componentsSeparatedByString:@"."].count == 4;
 }
@@ -220,6 +224,21 @@ NSDictionary *BrowserRemoteActionPayload(NSString *action, id JSON, NSString **o
         return @{};
     }
 
+    if ([action isEqualToString:@"media"]) {
+        // {command: toggle|play|pause|exit-fullscreen} | {command: seek, time} | {command: skip, delta} (seconds).
+        NSString *command = [body[@"command"] isKindOfClass:[NSString class]] ? body[@"command"] : nil;
+        if ([@[@"toggle", @"play", @"pause", @"exit-fullscreen"] containsObject:command ?: @""]) {
+            return @{@"command": command};
+        }
+        NSString *key = [command isEqualToString:@"seek"] ? @"time" : ([command isEqualToString:@"skip"] ? @"delta" : nil);
+        id value = key != nil ? body[key] : nil;
+        if (![value isKindOfClass:[NSNumber class]] || !isfinite([value doubleValue]) ||
+            ([command isEqualToString:@"seek"] && [value doubleValue] < 0.0)) {
+            return BrowserRemoteInvalidPayload(outErrorCode, @"invalid-request");
+        }
+        return @{@"command": command, key: @([value doubleValue])};
+    }
+
     if ([action isEqualToString:@"home"]) {
         NSMutableDictionary *payload = [NSMutableDictionary dictionary];
         if ([body[@"useCurrent"] respondsToSelector:@selector(boolValue)] && [body[@"useCurrent"] boolValue]) {
@@ -235,6 +254,12 @@ NSDictionary *BrowserRemoteActionPayload(NSString *action, id JSON, NSString **o
                 return BrowserRemoteInvalidPayload(outErrorCode, @"invalid-launch");
             }
             payload[@"launch"] = body[@"launch"];
+        }
+        if (body[@"favorites"] != nil) {
+            if (![body[@"favorites"] isKindOfClass:[NSNumber class]]) {
+                return BrowserRemoteInvalidPayload(outErrorCode, @"invalid-request");
+            }
+            payload[@"favorites"] = @([body[@"favorites"] boolValue]);
         }
         return payload.count > 0 ? payload : BrowserRemoteInvalidPayload(outErrorCode, @"invalid-request");
     }

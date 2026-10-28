@@ -269,9 +269,18 @@ static CGFloat const kThumbnailStagingOffset = 4096.0;
 }
 
 - (void)loadHomePage {
+    [self loadHomePageInWebView:self.activeWebView];
+}
+
+// Every home load goes through here so the Favorites home setting applies everywhere.
+- (void)loadHomePageInWebView:(BrowserWebView *)webView {
+    if (webView == self.activeWebView && [self.host browserTabCoordinatorShouldShowFavoritesHome]) {
+        [self.host browserTabCoordinatorShowFavoritesHome];
+        return;
+    }
     NSURLRequest *homePageRequest = [self.navigationService homePageRequest];
     if (homePageRequest != nil) {
-        [self.activeWebView loadRequest:homePageRequest];
+        [webView loadRequest:homePageRequest];
     }
 }
 
@@ -366,10 +375,7 @@ static CGFloat const kThumbnailStagingOffset = 4096.0;
     NSString *URLString = tab.URLString.length > 0 ? tab.URLString : tab.requestURL;
     if (URLString.length == 0) {
         if (fallbackToHomePage) {
-            NSURLRequest *homePageRequest = [self.navigationService homePageRequest];
-            if (homePageRequest != nil) {
-                [webView loadRequest:homePageRequest];
-            }
+            [self loadHomePageInWebView:webView];
         }
         return;
     }
@@ -378,10 +384,7 @@ static CGFloat const kThumbnailStagingOffset = 4096.0;
     if (request != nil) {
         [webView loadRequest:request];
     } else if (fallbackToHomePage) {
-        NSURLRequest *homePageRequest = [self.navigationService homePageRequest];
-        if (homePageRequest != nil) {
-            [webView loadRequest:homePageRequest];
-        }
+        [self loadHomePageInWebView:webView];
     }
 }
 

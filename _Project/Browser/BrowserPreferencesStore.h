@@ -38,6 +38,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) BOOL scalePagesToFit;
 @property (nonatomic) BOOL dontShowHintsOnLaunch;
 @property (nonatomic, copy) NSString *homePageURLString;
+// Home (Go To Home Page, new tabs, launch on Home Page) shows the Favorites grid
+// instead of loading homePageURLString. Default NO.
+@property (nonatomic) BOOL favoritesHomePageEnabled;
 
 // Privacy.
 // What to show on launch: 0 = restore last session (default), 1 = home page.

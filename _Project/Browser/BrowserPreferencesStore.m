@@ -8,6 +8,7 @@ static NSString * const kEnableFullscreenVideoPlaybackDefaultsKey = @"EnableFull
 static NSString * const kVideoHUDShowsTotalDurationDefaultsKey = @"VideoHUDShowsTotalDuration";
 static NSString * const kArrowDoubleTapShortcutsEnabledDefaultsKey = @"ArrowDoubleTapShortcutsEnabled";
 static NSString * const kRemoteServerEnabledDefaultsKey = @"RemoteServerEnabled";
+static NSString * const kFavoritesHomePageEnabledDefaultsKey = @"FavoritesHomePageEnabled";
 static NSString * const kThemeIndexDefaultsKey = @"ThemeIndex";
 static NSString * const kSettingsHintShownCountDefaultsKey = @"SettingsHintShownCount";
 static NSString * const kSearchEngineIndexDefaultsKey = @"SearchEngineIndex";
@@ -264,6 +265,15 @@ static NSArray<NSDictionary<NSString *, NSString *> *> *BrowserSearchEngines(voi
 }
 
 #pragma mark - Privacy
+
+- (BOOL)favoritesHomePageEnabled {
+    return [[self defaults] boolForKey:kFavoritesHomePageEnabledDefaultsKey];
+}
+
+- (void)setFavoritesHomePageEnabled:(BOOL)favoritesHomePageEnabled {
+    [[self defaults] setBool:favoritesHomePageEnabled forKey:kFavoritesHomePageEnabledDefaultsKey];
+    [[self defaults] synchronize];
+}
 
 - (NSUInteger)launchPageMode {
     NSInteger mode = [[self defaults] integerForKey:kLaunchPageModeDefaultsKey];

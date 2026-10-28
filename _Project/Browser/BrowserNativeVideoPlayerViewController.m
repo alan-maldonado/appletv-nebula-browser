@@ -77,6 +77,7 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
 
 // Resume-where-you-left-off support.
 @property (nonatomic, assign) BOOL didAttemptResume;
+@property (nonatomic, assign) BOOL remoteVisible;
 @property (nonatomic, assign) NSTimeInterval lastResumeSaveTimestamp;
 
 @end
@@ -157,6 +158,7 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
             strongSelf.lastResumeSaveTimestamp = uptime;
             [strongSelf saveResumePosition];
         }
+        [strongSelf notifyRemoteMediaStateDidChange];
         if (strongSelf.positionHUDView == nil || strongSelf.positionHUDView.hidden) {
             return;
         }
@@ -199,6 +201,14 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
     NSLog(@"%@ viewDidAppear", kBrowserNativePlayerInputLogPrefix);
     [self log:@"viewDidAppear play"];
     [self.player play];
+    self.remoteVisible = YES;
+    [self notifyRemoteMediaStateDidChange];
+}
+
+- (void)viewDidDisappear:(BOOL)animated {
+    [super viewDidDisappear:animated];
+    self.remoteVisible = NO;
+    [self notifyRemoteMediaStateDidChange];
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
@@ -246,6 +256,85 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
         [self.player play];
         [self schedulePositionHUDHide];
     }
+}
+
+#pragma mark - Nebula Remote
+
+- (void)notifyRemoteMediaStateDidChange {
+    if (self.remoteMediaStateDidChange != nil) {
+        self.remoteMediaStateDidChange();
+    }
+}
+
+- (NSDictionary *)remoteMediaState {
+    if (!self.remoteVisible || self.player.currentItem == nil) {
+        return nil;
+    }
+    // Same playhead the HUD shows: the pending seek or virtual scan target wins.
+    NSTimeInterval time;
+    if ([self isScanning]) {
+        time = self.scanTargetTime;
+    } else if (self.hasPendingSeek) {
+        time = self.pendingSeekTarget;
+    } else {
+        time = CMTimeGetSeconds(self.player.currentTime);
+    }
+    NSTimeInterval duration = CMTimeGetSeconds(self.player.currentItem.duration);
+    BOOL playing = [self isScanning];
+    if (!playing) {
+        if (@available(tvOS 10.0, *)) {
+            playing = self.player.timeControlStatus == AVPlayerTimeControlStatusPlaying;
+        } else {
+            playing = self.player.rate > 0.0f;
+        }
+    }
+    return @{
+        @"source": @"native",
+        @"title": self.videoTitle ?: @"",
+        @"time": @(isfinite(time) ? time : 0.0),
+        @"duration": isfinite(duration) && duration > 0.0 ? @(duration) : NSNull.null,
+        @"playing": @(playing),
+        @"rate": @([self isScanning] ? self.scanRate : 1.0),
+        @"fullscreen": @YES,
+    };
+}
+
+- (void)remoteTogglePlayback {
+    [self togglePlayback];
+    [self notifyRemoteMediaStateDidChange];
+}
+
+- (void)remotePlay {
+    if ([self isScanning] || self.player.rate == 0.0f) {
+        [self togglePlayback];
+    }
+    [self notifyRemoteMediaStateDidChange];
+}
+
+- (void)remotePause {
+    if ([self isScanning]) {
+        [self applyScanRate:1.0f];
+    }
+    if (self.player.rate > 0.0f) {
+        [self togglePlayback];
+    }
+    [self notifyRemoteMediaStateDidChange];
+}
+
+- (void)remoteClose {
+    [self closePlayer];
+}
+
+- (void)remoteSeekToTime:(NSTimeInterval)time {
+    NSTimeInterval current = [self.remoteMediaState[@"time"] doubleValue];
+    [self remoteSkipByInterval:time - current];
+}
+
+- (void)remoteSkipByInterval:(NSTimeInterval)delta {
+    [self skipByInterval:delta];
+    // A seek from the panel is a decision, not an exploration Menu should undo.
+    self.seekSessionActive = NO;
+    [self notifyRemoteMediaStateDidChange];
 }
 
 - (BOOL)isScanning {
@@ -823,6 +912,7 @@ static NSString *BrowserNativePlayerFormatTime(NSTimeInterval time) {
                     break;
             }
             [self log:@"timeControlStatus=%@ reason=%@", status, self.player.reasonForWaitingToPlay ?: @""];
+            [self notifyRemoteMediaStateDidChange];
             return;
         }
     }
