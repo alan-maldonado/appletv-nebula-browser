@@ -302,6 +302,20 @@ static UIViewController *BrowserFindPresentedNativeVideoPlayerViewController(UIA
             }
         }
 
+        if (press.type == UIPressTypeDownArrow && nativeVideoPlayerClass != Nil && nativeVideoPlayerViewController != nil) {
+            SEL cycleSubtitlesSelector = NSSelectorFromString(@"cycleSubtitles");
+            if ([nativeVideoPlayerViewController respondsToSelector:cycleSubtitlesSelector]) {
+                if (press.phase == UIPressPhaseEnded) {
+                    NSLog(@"[InputTrace][App] swallow Down press for native player (subtitles)");
+                    UIViewController *playerViewController = nativeVideoPlayerViewController;
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        ((void (*)(id, SEL))objc_msgSend)(playerViewController, cycleSubtitlesSelector);
+                    });
+                }
+                return;
+            }
+        }
+
         if (press.type == UIPressTypeLeftArrow || press.type == UIPressTypeRightArrow) {
             if (nativeVideoPlayerClass != Nil && nativeVideoPlayerViewController != nil) {
                 // Swallow EVERY phase: if Began leaks through to AVPlayerViewController without

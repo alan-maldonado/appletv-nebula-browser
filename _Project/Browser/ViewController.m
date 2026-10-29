@@ -462,8 +462,11 @@ static UIColor *kTextColor(void) {
 }
 
 // Show the support screen every 10th launch (counter persisted), so it nudges
-// without being annoying.
+// without being annoying. Development (Debug) builds never show it.
 - (void)maybeShowDonateOnLaunch {
+#if DEBUG
+    return;
+#endif
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     NSInteger count = [defaults integerForKey:@"NebulaLaunchCount"] + 1;
     [defaults setInteger:count forKey:@"NebulaLaunchCount"];

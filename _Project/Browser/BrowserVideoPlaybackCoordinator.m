@@ -67,8 +67,29 @@ static BOOL const kBrowserYouTubeNativeExtractionEnabled = NO;
     if (title.length == 0) {
         title = self.host.browserCurrentPageTitle;
     }
+    NSMutableArray<NSDictionary *> *subtitleTracks = [NSMutableArray array];
+    NSArray *subtitles = [videoInfo[@"subtitles"] isKindOfClass:[NSArray class]] ? videoInfo[@"subtitles"] : @[];
+    for (NSDictionary *subtitle in subtitles) {
+        NSString *subtitleSource = [subtitle isKindOfClass:[NSDictionary class]] && [subtitle[@"src"] isKindOfClass:[NSString class]] ? subtitle[@"src"] : nil;
+        NSURL *subtitleURL = subtitleSource.length > 0 ? [NSURL URLWithString:subtitleSource] : nil;
+        if (subtitleURL.host.length == 0) {
+            continue;
+        }
+        [subtitleTracks addObject:@{
+            @"url": subtitleURL,
+            @"label": [subtitle[@"label"] isKindOfClass:[NSString class]] ? subtitle[@"label"] : @"",
+            @"language": [subtitle[@"language"] isKindOfClass:[NSString class]] ? subtitle[@"language"] : @"",
+        }];
+    }
+    NSInteger subtitleIndex = [videoInfo[@"subtitleIndex"] respondsToSelector:@selector(integerValue)] ? [videoInfo[@"subtitleIndex"] integerValue] : -1;
+    if (subtitleIndex >= (NSInteger)subtitleTracks.count) {
+        subtitleIndex = -1;
+    }
+
     // Explicit user request: bypasses the Full Screen Player preference.
-    [self forcePresentNativeVideoPlayerForURL:videoURL title:title requestHeaders:nil cookies:nil];
+    BrowserNativeVideoPlayerViewController *playerViewController = [self nativeVideoPlayerForURL:videoURL title:title requestHeaders:nil cookies:nil];
+    [playerViewController setSubtitleTracks:subtitleTracks selectedIndex:subtitleIndex];
+    [self.host browserPresentViewController:playerViewController];
 }
 
 - (void)playVideoUnderCursorIfAvailable {
@@ -239,17 +260,27 @@ static BOOL const kBrowserYouTubeNativeExtractionEnabled = NO;
                                       title:(NSString *)title
                              requestHeaders:(NSDictionary<NSString *, NSString *> *)requestHeaders
                                     cookies:(NSArray<NSHTTPCookie *> *)cookies {
+    BrowserNativeVideoPlayerViewController *playerViewController = [self nativeVideoPlayerForURL:URL title:title requestHeaders:requestHeaders cookies:cookies];
+    if (playerViewController != nil) {
+        [self.host browserPresentViewController:playerViewController];
+    }
+}
+
+// Pauses the page and builds the player; the caller presents it.
+- (BrowserNativeVideoPlayerViewController *)nativeVideoPlayerForURL:(NSURL *)URL
+                                                               title:(NSString *)title
+                                                      requestHeaders:(NSDictionary<NSString *, NSString *> *)requestHeaders
+                                                             cookies:(NSArray<NSHTTPCookie *> *)cookies {
     if (URL == nil) {
-        return;
+        return nil;
     }
 
     [self.host.browserWebView pauseAllMediaPlayback];
 
-    BrowserNativeVideoPlayerViewController *playerViewController = [[BrowserNativeVideoPlayerViewController alloc] initWithURL:URL
-                                                                                                                          title:title
-                                                                                                                  requestHeaders:requestHeaders
-                                                                                                                         cookies:cookies];
-    [self.host browserPresentViewController:playerViewController];
+    return [[BrowserNativeVideoPlayerViewController alloc] initWithURL:URL
+                                                                 title:title
+                                                         requestHeaders:requestHeaders
+                                                                cookies:cookies];
 }
 
 - (NSDictionary<NSString *, NSString *> *)browserHeadersForYouTubePlaybackURL:(NSURL *)playbackURL

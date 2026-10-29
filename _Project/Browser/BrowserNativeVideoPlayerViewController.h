@@ -24,6 +24,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)remoteSeekToTime:(NSTimeInterval)time;
 - (void)remoteSkipByInterval:(NSTimeInterval)delta;
 
+// The page's sidecar WebVTT tracks, drawn over the video by the player itself:
+// each {url (NSURL), label, language}. selectedIndex -1 starts with them off.
+- (void)setSubtitleTracks:(NSArray<NSDictionary *> *)tracks selectedIndex:(NSInteger)selectedIndex;
+// Down on the Siri Remote: off → track 1 → … → off.
+- (void)cycleSubtitles;
+
 - (instancetype)initWithNibName:(nullable NSString *)nibNameOrNil bundle:(nullable NSBundle *)nibBundleOrNil NS_UNAVAILABLE;
 - (instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE;
 

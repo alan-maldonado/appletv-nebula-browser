@@ -79,6 +79,15 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
 @property (nonatomic, assign) BOOL didAttemptResume;
 @property (nonatomic, assign) BOOL remoteVisible;
 @property (nonatomic, assign) NSTimeInterval lastResumeSaveTimestamp;
+@property (nonatomic, copy) NSArray<NSDictionary *> *subtitleTracks;
+@property (nonatomic, assign) NSInteger selectedSubtitleIndex;
+@property (nonatomic, copy) NSArray<NSDictionary *> *subtitleCues;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSArray<NSDictionary *> *> *subtitleCuesByIndex;
+@property (nonatomic, strong) UIView *subtitleBackgroundView;
+@property (nonatomic, strong) UILabel *subtitleLabel;
+@property (nonatomic, strong) UILabel *subtitleToastLabel;
+@property (nonatomic, strong) NSTimer *subtitleToastHideTimer;
+@property (nonatomic, strong) id subtitleTimeObserver;
 
 @end
 
@@ -106,6 +115,9 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
         _videoTitle = [title copy] ?: @"";
         _requestHeaders = [requestHeaders copy] ?: @{};
         _requestCookies = [cookies copy] ?: @[];
+        _subtitleTracks = @[];
+        _selectedSubtitleIndex = -1;
+        _subtitleCuesByIndex = [NSMutableDictionary dictionary];
         self.modalPresentationStyle = UIModalPresentationFullScreen;
     }
     return self;
@@ -169,6 +181,12 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
         [strongSelf updatePositionHUDWithTime:CMTimeGetSeconds(time)];
     }];
 
+    self.subtitleTimeObserver = [self.player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(0.1, NSEC_PER_SEC)
+                                                                           queue:dispatch_get_main_queue()
+                                                                      usingBlock:^(CMTime time) {
+        [weakSelf updateSubtitleForTime:CMTimeGetSeconds(time)];
+    }];
+
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(handlePlayerItemDidPlayToEndTime:)
                                                  name:AVPlayerItemDidPlayToEndTimeNotification
@@ -225,6 +243,10 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
     if (self.periodicTimeObserver != nil) {
         [self.player removeTimeObserver:self.periodicTimeObserver];
     }
+    if (self.subtitleTimeObserver != nil) {
+        [self.player removeTimeObserver:self.subtitleTimeObserver];
+    }
+    [self.subtitleToastHideTimer invalidate];
     [self.scanTimer invalidate];
     [self.positionHUDHideTimer invalidate];
     @try {
@@ -336,6 +358,208 @@ static NSString *BrowserNativePlayerPressPhaseString(UIPressPhase phase) {
     self.seekSessionActive = NO;
     [self notifyRemoteMediaStateDidChange];
 }
+
+#pragma mark - Subtitles
+
+static NSTimeInterval BrowserWebVTTParseTimestamp(NSString *timestamp) {
+    // hh:mm:ss.mmm or mm:ss.mmm
+    NSArray<NSString *> *parts = [[timestamp stringByReplacingOccurrencesOfString:@"," withString:@"."] componentsSeparatedByString:@":"];
+    if (parts.count < 2 || parts.count > 3) {
+        return -1.0;
+    }
+    NSTimeInterval seconds = 0.0;
+    for (NSString *part in parts) {
+        seconds = seconds * 60.0 + part.doubleValue;
+    }
+    return seconds;
+}
+
+static NSString *BrowserWebVTTPlainText(NSString *text) {
+    NSRegularExpression *tags = [NSRegularExpression regularExpressionWithPattern:@"<[^>]*>" options:0 error:nil];
+    NSString *plain = [tags stringByReplacingMatchesInString:text options:0 range:NSMakeRange(0, text.length) withTemplate:@""];
+    NSDictionary<NSString *, NSString *> *entities = @{ @"&amp;": @"&", @"&lt;": @"<", @"&gt;": @">", @"&nbsp;": @" ", @"&quot;": @"\"", @"&#39;": @"'", @"&lrm;": @"", @"&rlm;": @"" };
+    for (NSString *entity in entities) {
+        plain = [plain stringByReplacingOccurrencesOfString:entity withString:entities[entity]];
+    }
+    return [plain stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+}
+
+// [{start, end, text}] sorted by start.
+static NSArray<NSDictionary *> *BrowserParseWebVTT(NSString *source) {
+    NSMutableArray<NSDictionary *> *cues = [NSMutableArray array];
+    NSString *normalized = [[source stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"] stringByReplacingOccurrencesOfString:@"\r" withString:@"\n"];
+    for (NSString *block in [normalized componentsSeparatedByString:@"\n\n"]) {
+        NSArray<NSString *> *lines = [block componentsSeparatedByString:@"\n"];
+        NSUInteger timingLine = [lines indexOfObjectPassingTest:^BOOL(NSString *line, __unused NSUInteger idx, __unused BOOL *stop) {
+            return [line containsString:@"-->"];
+        }];
+        if (timingLine == NSNotFound) {
+            continue;
+        }
+        NSArray<NSString *> *timing = [lines[timingLine] componentsSeparatedByString:@"-->"];
+        NSString *startString = [timing.firstObject stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+        NSString *endString = [[timing.lastObject stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] componentsSeparatedByString:@" "].firstObject;
+        NSTimeInterval start = BrowserWebVTTParseTimestamp(startString);
+        NSTimeInterval end = BrowserWebVTTParseTimestamp(endString ?: @"");
+        NSArray<NSString *> *textLines = [lines subarrayWithRange:NSMakeRange(timingLine + 1, lines.count - timingLine - 1)];
+        NSString *text = BrowserWebVTTPlainText([textLines componentsJoinedByString:@"\n"]);
+        if (start < 0.0 || end <= start || text.length == 0) {
+            continue;
+        }
+        [cues addObject:@{ @"start": @(start), @"end": @(end), @"text": text }];
+    }
+    [cues sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        return [a[@"start"] compare:b[@"start"]];
+    }];
+    return cues;
+}
+
+- (void)setSubtitleTracks:(NSArray<NSDictionary *> *)tracks selectedIndex:(NSInteger)selectedIndex {
+    self.subtitleTracks = tracks ?: @[];
+    [self.subtitleCuesByIndex removeAllObjects];
+    [self log:@"subtitle tracks=%lu selected=%ld", (unsigned long)self.subtitleTracks.count, (long)selectedIndex];
+    [self selectSubtitleAtIndex:selectedIndex];
+}
+
+- (void)cycleSubtitles {
+    if (self.subtitleTracks.count == 0) {
+        [self showSubtitleToast:@"No subtitles"];
+        return;
+    }
+    NSInteger next = self.selectedSubtitleIndex + 1;
+    if (next >= (NSInteger)self.subtitleTracks.count) {
+        next = -1;
+    }
+    [self selectSubtitleAtIndex:next];
+    [self showSubtitleToast:[@"Subtitles: " stringByAppendingString:[self subtitleTitleAtIndex:next]]];
+}
+
+- (NSString *)subtitleTitleAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)self.subtitleTracks.count) {
+        return @"Off";
+    }
+    NSDictionary *track = self.subtitleTracks[index];
+    NSString *label = track[@"label"];
+    if (label.length > 0) {
+        return label;
+    }
+    NSString *language = track[@"language"];
+    return language.length > 0 ? language : [NSString stringWithFormat:@"Track %ld", (long)index + 1];
+}
+
+- (void)selectSubtitleAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)self.subtitleTracks.count) {
+        index = -1;
+    }
+    self.selectedSubtitleIndex = index;
+    self.subtitleCues = index >= 0 ? self.subtitleCuesByIndex[@(index)] : nil;
+    [self updateSubtitleForTime:self.player != nil ? CMTimeGetSeconds(self.player.currentTime) : 0.0];
+    if (index < 0 || self.subtitleCues != nil) {
+        return;
+    }
+
+    NSURL *URL = self.subtitleTracks[index][@"url"];
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:URL];
+    [self.requestHeaders enumerateKeysAndObjectsUsingBlock:^(NSString *field, NSString *value, __unused BOOL *stop) {
+        [request setValue:value forHTTPHeaderField:field];
+    }];
+    __weak typeof(self) weakSelf = self;
+    [[[NSURLSession sharedSession] dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        NSString *source = data.length > 0 ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+        NSArray<NSDictionary *> *cues = source.length > 0 ? BrowserParseWebVTT(source) : @[];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            typeof(self) strongSelf = weakSelf;
+            if (strongSelf == nil) {
+                return;
+            }
+            [strongSelf log:@"subtitles loaded index=%ld status=%ld cues=%lu error=%@",
+             (long)index, (long)([response isKindOfClass:[NSHTTPURLResponse class]] ? ((NSHTTPURLResponse *)response).statusCode : 0),
+             (unsigned long)cues.count, error.localizedDescription ?: @"(null)"];
+            strongSelf.subtitleCuesByIndex[@(index)] = cues;
+            if (strongSelf.selectedSubtitleIndex == index) {
+                strongSelf.subtitleCues = cues;
+                [strongSelf updateSubtitleForTime:CMTimeGetSeconds(strongSelf.player.currentTime)];
+            }
+        });
+    }] resume];
+}
+
+- (void)updateSubtitleForTime:(NSTimeInterval)time {
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    for (NSDictionary *cue in self.subtitleCues) {
+        NSTimeInterval start = [cue[@"start"] doubleValue];
+        if (start > time) {
+            break;
+        }
+        if (time < [cue[@"end"] doubleValue]) {
+            [lines addObject:cue[@"text"]];
+        }
+    }
+    NSString *text = [lines componentsJoinedByString:@"\n"];
+    if (text.length == 0) {
+        self.subtitleBackgroundView.hidden = YES;
+        return;
+    }
+    if (self.subtitleLabel == nil) {
+        if (self.contentOverlayView == nil) {
+            return;
+        }
+        UIView *background = [UIView new];
+        background.translatesAutoresizingMaskIntoConstraints = NO;
+        background.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.6];
+        background.layer.cornerRadius = 10.0;
+        UILabel *label = [UILabel new];
+        label.translatesAutoresizingMaskIntoConstraints = NO;
+        label.numberOfLines = 0;
+        label.textAlignment = NSTextAlignmentCenter;
+        label.textColor = UIColor.whiteColor;
+        label.font = [UIFont systemFontOfSize:46.0 weight:UIFontWeightSemibold];
+        [background addSubview:label];
+        [self.contentOverlayView addSubview:background];
+        [NSLayoutConstraint activateConstraints:@[
+            [label.topAnchor constraintEqualToAnchor:background.topAnchor constant:10.0],
+            [label.bottomAnchor constraintEqualToAnchor:background.bottomAnchor constant:-10.0],
+            [label.leadingAnchor constraintEqualToAnchor:background.leadingAnchor constant:24.0],
+            [label.trailingAnchor constraintEqualToAnchor:background.trailingAnchor constant:-24.0],
+            [background.centerXAnchor constraintEqualToAnchor:self.contentOverlayView.centerXAnchor],
+            [background.bottomAnchor constraintEqualToAnchor:self.contentOverlayView.bottomAnchor constant:-90.0],
+            [background.widthAnchor constraintLessThanOrEqualToAnchor:self.contentOverlayView.widthAnchor multiplier:0.8],
+        ]];
+        self.subtitleBackgroundView = background;
+        self.subtitleLabel = label;
+    }
+    self.subtitleLabel.text = text;
+    self.subtitleBackgroundView.hidden = NO;
+}
+
+- (void)showSubtitleToast:(NSString *)message {
+    if (self.subtitleToastLabel == nil) {
+        UILabel *label = [UILabel new];
+        label.translatesAutoresizingMaskIntoConstraints = NO;
+        label.textColor = UIColor.whiteColor;
+        label.font = [UIFont systemFontOfSize:34.0 weight:UIFontWeightSemibold];
+        label.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.6];
+        label.textAlignment = NSTextAlignmentCenter;
+        label.layer.cornerRadius = 12.0;
+        label.layer.masksToBounds = YES;
+        [self.contentOverlayView addSubview:label];
+        [NSLayoutConstraint activateConstraints:@[
+            [label.topAnchor constraintEqualToAnchor:self.contentOverlayView.topAnchor constant:60.0],
+            [label.leadingAnchor constraintEqualToAnchor:self.contentOverlayView.leadingAnchor constant:90.0],
+            [label.heightAnchor constraintEqualToConstant:64.0],
+        ]];
+        self.subtitleToastLabel = label;
+    }
+    self.subtitleToastLabel.text = [NSString stringWithFormat:@"   %@   ", message];
+    self.subtitleToastLabel.hidden = NO;
+    [self.subtitleToastHideTimer invalidate];
+    __weak typeof(self) weakSelf = self;
+    self.subtitleToastHideTimer = [NSTimer scheduledTimerWithTimeInterval:2.0 repeats:NO block:^(__unused NSTimer *timer) {
+        weakSelf.subtitleToastLabel.hidden = YES;
+    }];
+}
+
+#pragma mark - Scanning
 
 - (BOOL)isScanning {
     return self.scanRate > 1.0f;
