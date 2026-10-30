@@ -543,6 +543,13 @@ static BOOL const kBrowserYouTubeNativeExtractionEnabled = NO;
         return;
     }
 
+    // Arm the play-guard BEFORE pausing: the page's auto-resume watchdog
+    // re-plays within a second of pauseAllMediaPlayback, and its play() then
+    // rejects at the prototype level (see BrowserMediaEngineUserScriptWithFlags).
+    if ([[NSUserDefaults standardUserDefaults] boolForKey:@"TakeoverPlayGuardEnabled"]) {
+        [self.host.browserWebView evaluateJavaScriptOnRecentProbeFrames:@"try{window.__browserNativeTakeoverActive=true;}catch(e){}"];
+    }
+
     [self.host.browserWebView pauseAllMediaPlayback];
     self.pageMediaPausedForNativePlayer = YES;
 
@@ -634,7 +641,8 @@ static BOOL const kBrowserYouTubeNativeExtractionEnabled = NO;
 // Fire-and-forget: no new UI.
 - (void)resumeLargestVisiblePageVideo {
     static NSString *const kResumeLargestVideoScript =
-        @"(function(){"
+        @"try{window.__browserNativeTakeoverActive=false;}catch(e){}"
+        "(function(){"
         "var best=null;var bestArea=-1;"
         "try{"
             "var vids=document.querySelectorAll('video');"

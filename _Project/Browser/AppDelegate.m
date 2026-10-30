@@ -79,6 +79,11 @@
         // so CAPTCHA/Trustwall cross-origin buttons work). Default ON;
         // a launch arg flips it off to restore the JS-synthetic path.
         @"NativeClickEnabled": @YES,
+        // Takeover play-guard (freeze page media during native fullscreen:
+        // play() rejects while the native takeover flag is set, killing the
+        // pages' auto-resume watchdog double-playback stutter). Default ON;
+        // a launch arg flips it off.
+        @"TakeoverPlayGuardEnabled": @YES,
         // Default YES: the native player builds its asset as a plain
         // AVURLAsset with HTTP header options; a launch arg re-enables the
         // custom resource-loader path.

@@ -869,6 +869,22 @@ static NSString *BrowserMediaEngineUserScriptWithFlags(BOOL hlsEnabled, BOOL net
                 "}"
             "}"
         "} catch (error) {}"
+        // Play-guard: freeze page media during native fullscreen by rejecting
+        // play() at the HTMLMediaElement prototype while the takeover flag is
+        // true (kills the kisskh-family auto-resume watchdog's re-play). No
+        // config gate: inert unless __browserNativeTakeoverActive is true.
+        "(function(){"
+        "  try {"
+        "    var origPlay = HTMLMediaElement.prototype.play;"
+        "    if (origPlay && !window.__browserPlayGuardInstalled) {"
+        "      window.__browserPlayGuardInstalled = true;"
+        "      HTMLMediaElement.prototype.play = function () {"
+        "        try { if (window.__browserNativeTakeoverActive === true) { return Promise.reject(new Error('browser-native-takeover')); } } catch (e) {}"
+        "        try { return origPlay.apply(this, arguments); } catch (e) { return Promise.reject(e); }"
+        "      };"
+        "    }"
+        "  } catch (e) {}"
+        "})();"
     "})();";
     return [config stringByAppendingString:script];
 }
