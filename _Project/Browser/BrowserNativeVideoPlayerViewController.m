@@ -315,10 +315,12 @@ static NSArray<BrowserSubtitleCue *> *BrowserSubtitleCuesFromDictionaries(NSArra
 @interface BrowserSubtitleOverlayView : UIView
 
 // requestHeaders: the media-request header policy (UA + Referer, no Origin)
-// used for raw <track> src fetches.
+// used for raw <track> src fetches. presentationHost: the host of the page URL
+// the takeover came from; it selects the cue font size (see cueFontSize).
 - (instancetype)initWithSubtitleTracks:(NSArray<NSDictionary *> *)subtitleTracks
                                 player:(nullable AVPlayer *)player
-                        requestHeaders:(nullable NSDictionary<NSString *, NSString *> *)requestHeaders NS_DESIGNATED_INITIALIZER;
+                        requestHeaders:(nullable NSDictionary<NSString *, NSString *> *)requestHeaders
+                     presentationHost:(nullable NSString *)presentationHost NS_DESIGNATED_INITIALIZER;
 - (void)stopTimeObserving;
 - (NSAttributedString *)styledCueStringForText:(NSString *)text;
 
@@ -336,6 +338,7 @@ static NSArray<BrowserSubtitleCue *> *BrowserSubtitleCuesFromDictionaries(NSArra
 @property (nonatomic, weak) AVPlayer *observedPlayer;
 @property (nonatomic, copy) NSDictionary<NSString *, NSString *> *requestHeaders;
 @property (nonatomic, strong) NSURLSession *fetchSession;
+@property (nonatomic, copy, nullable) NSString *subtitlePresentationHost; // cue-font sizing (see cueFontSize)
 
 @end
 
@@ -343,15 +346,20 @@ static NSArray<BrowserSubtitleCue *> *BrowserSubtitleCuesFromDictionaries(NSArra
 
 - (instancetype)initWithSubtitleTracks:(NSArray<NSDictionary *> *)subtitleTracks
                                 player:(AVPlayer *)player
-                        requestHeaders:(NSDictionary<NSString *, NSString *> *)requestHeaders {
+                        requestHeaders:(NSDictionary<NSString *, NSString *> *)requestHeaders
+                     presentationHost:(NSString *)presentationHost {
     self = [super initWithFrame:CGRectZero];
     if (self) {
         _requestHeaders = [requestHeaders copy] ?: @{};
+        _subtitlePresentationHost = [presentationHost copy];
         self.userInteractionEnabled = NO;
 
+        CGFloat cueFont = self.cueFontSize;
         _cueLabel = [BrowserOutlinedCueLabel new];
         _cueLabel.numberOfLines = 3;
-        _cueLabel.font = [UIFont boldSystemFontOfSize:38.0];
+        _cueLabel.font = [UIFont boldSystemFontOfSize:cueFont];
+        // The outline tracks the font so its weight reads the same at every size.
+        _cueLabel.outlineRadius = 2.5 * cueFont / 38.0;
         _cueLabel.textColor = UIColor.yellowColor;
         _cueLabel.textAlignment = NSTextAlignmentCenter;
         _cueLabel.adjustsFontSizeToFitWidth = NO;
@@ -474,6 +482,13 @@ willPerformHTTPRedirection:(__unused NSHTTPURLResponse *)response
     [self setNeedsLayout];
 }
 
+// Single computed cue font: 28pt baseline; kisskh-family pages carry smaller
+// authored cues, so their takeovers double it (56pt). Used by both the label
+// creation and styledCueStringForText: so the two never drift apart.
+- (CGFloat)cueFontSize {
+    return [self.subtitlePresentationHost localizedCaseInsensitiveContainsString:@"kisskh"] ? 56.0 : 28.0;
+}
+
 // Plain yellow fill: the outline is painted by BrowserOutlinedCueLabel's offset
 // passes, so the attributes here stay clean (the stroke trick left horizontal
 // striations inside the glyphs).
@@ -481,7 +496,7 @@ willPerformHTTPRedirection:(__unused NSHTTPURLResponse *)response
     NSMutableParagraphStyle *paragraph = [NSMutableParagraphStyle new];
     paragraph.alignment = NSTextAlignmentCenter;
     NSDictionary *attributes = @{
-        NSFontAttributeName: [UIFont boldSystemFontOfSize:38.0],
+        NSFontAttributeName: [UIFont boldSystemFontOfSize:self.cueFontSize],
         NSParagraphStyleAttributeName: paragraph,
         NSForegroundColorAttributeName: UIColor.yellowColor,
     };
@@ -750,7 +765,8 @@ willPerformHTTPRedirection:(__unused NSHTTPURLResponse *)response
     if (self.subtitleTracks.count > 0) {
         self.subtitleOverlayView = [[BrowserSubtitleOverlayView alloc] initWithSubtitleTracks:self.subtitleTracks
                                                                                        player:self.player
-                                                                               requestHeaders:BrowserPlainPlaybackHeaderFields(self.requestHeaders)];
+                                                                               requestHeaders:BrowserPlainPlaybackHeaderFields(self.requestHeaders)
+                                                                            presentationHost:self.subtitlePresentationHost];
         self.subtitleOverlayView.frame = self.contentOverlayView.bounds;
         self.subtitleOverlayView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         [self.contentOverlayView addSubview:self.subtitleOverlayView];

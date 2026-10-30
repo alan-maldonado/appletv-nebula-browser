@@ -42,6 +42,11 @@ NS_ASSUME_NONNULL_BEGIN
 // video; nil or empty keeps the player behavior identical (no overlay).
 @property (nonatomic, copy, nullable) NSArray<NSDictionary *> *subtitleTracks; // [{label, mode, cues:[{s,e,t}]} or {label, src}]
 
+// Host of the page URL the takeover came from (e.g. "www.kisskh.co"). Set by
+// BrowserVideoPlaybackCoordinator before presentation alongside subtitleTracks;
+// the cue overlay scales its font per host (nil keeps the baseline size).
+@property (nonatomic, copy, nullable) NSString *subtitlePresentationHost;
+
 - (instancetype)initWithNibName:(nullable NSString *)nibNameOrNil bundle:(nullable NSBundle *)nibBundleOrNil NS_UNAVAILABLE;
 - (instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE;
 

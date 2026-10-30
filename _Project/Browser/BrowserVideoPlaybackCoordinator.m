@@ -24,13 +24,15 @@ static BOOL const kBrowserYouTubeNativeExtractionEnabled = NO;
 
 // Shared presentation tail. subtitleFrameKey: the probe-frame key of the
 // report that selected the video; when set, page subtitles are captured
-// on-demand for that frame before the player is presented.
+// on-demand for that frame before the player is presented. presentationHost:
+// the page URL's host, forwarded to the player for subtitle cue sizing.
 - (void)forcePresentNativeVideoPlayerForURL:(NSURL *)URL
                                       title:(NSString *)title
                              requestHeaders:(NSDictionary<NSString *, NSString *> *)requestHeaders
                                     cookies:(NSArray<NSHTTPCookie *> *)cookies
                   candidateMasterPlaylistURLs:(NSArray<NSURL *> *)candidateMasterPlaylistURLs
-                            subtitleFrameKey:(NSString *)subtitleFrameKey;
+                            subtitleFrameKey:(NSString *)subtitleFrameKey
+                            presentationHost:(nullable NSString *)presentationHost;
 
 @end
 
@@ -306,7 +308,7 @@ static BOOL const kBrowserYouTubeNativeExtractionEnabled = NO;
                 ? [probePageURL.host stringByAppendingString:probePageURL.path ?: @""]
                 : pageURLString;
         }
-        [self forcePresentNativeVideoPlayerForURL:videoURL title:title requestHeaders:requestHeaders cookies:nil candidateMasterPlaylistURLs:candidateMasterPlaylistURLs subtitleFrameKey:subtitleFrameKey];
+        [self forcePresentNativeVideoPlayerForURL:videoURL title:title requestHeaders:requestHeaders cookies:nil candidateMasterPlaylistURLs:candidateMasterPlaylistURLs subtitleFrameKey:subtitleFrameKey presentationHost:(pageURLString.length > 0 ? [NSURL URLWithString:pageURLString].host : nil)];
         NSLog(@"[NativeVideoPlayer] media probe presented url=%@ frame=%@", candidateURLString, pageURLString ?: @"");
         // The web view stamps each stored report with its receive time
         // (kBrowserMediaProbeTimestampKey in BrowserWebView.m, kept in the
@@ -518,7 +520,8 @@ static BOOL const kBrowserYouTubeNativeExtractionEnabled = NO;
                                requestHeaders:requestHeaders
                                       cookies:cookies
                   candidateMasterPlaylistURLs:candidateMasterPlaylistURLs
-                            subtitleFrameKey:nil];
+                            subtitleFrameKey:nil
+                            presentationHost:nil];
 }
 
 // subtitleFrameKey: non-nil only on the media-probe paths — the frame key of
@@ -526,13 +529,16 @@ static BOOL const kBrowserYouTubeNativeExtractionEnabled = NO;
 // from that frame (kisskh-family sites attach <track> TextTracks the native
 // takeover would otherwise lose) and the presentation waits on the completion;
 // the extract's 1.5s watchdog caps the takeover delay. nil frame key / empty
-// result: presented exactly as before, no overlay.
+// result: presented exactly as before, no overlay. presentationHost: the probe
+// page URL's host, forwarded to the player so the cue overlay can size its
+// font per host; nil keeps the baseline.
 - (void)forcePresentNativeVideoPlayerForURL:(NSURL *)URL
                                       title:(NSString *)title
                              requestHeaders:(NSDictionary<NSString *, NSString *> *)requestHeaders
                                     cookies:(NSArray<NSHTTPCookie *> *)cookies
                   candidateMasterPlaylistURLs:(NSArray<NSURL *> *)candidateMasterPlaylistURLs
-                            subtitleFrameKey:(NSString *)subtitleFrameKey {
+                            subtitleFrameKey:(NSString *)subtitleFrameKey
+                            presentationHost:(nullable NSString *)presentationHost {
     if (URL == nil) {
         return;
     }
@@ -556,6 +562,7 @@ static BOOL const kBrowserYouTubeNativeExtractionEnabled = NO;
             // Main thread (extract contract): set before presentation; an
             // empty array keeps the player identical to the no-overlay path.
             playerViewController.subtitleTracks = subtitleTracks;
+            playerViewController.subtitlePresentationHost = presentationHost;
             [weakSelf.host browserPresentViewController:playerViewController];
         }];
         return;
