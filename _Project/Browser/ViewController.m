@@ -827,7 +827,11 @@ static UIColor *kTextColor(void) {
         @"• Right: fast-forward 2x to 32x. Left: slow down. Play/Pause: resume there.\n"
         @"• Swipe to move through the video; while paused, quick swipes accelerate.\n"
         @"• Back cancels fast-forward or swiping and returns to where you were.\n"
-        @"• Videos resume where you left off.";
+        @"• Videos resume where you left off.\n"
+        @"• Tap a playing video or hold Play/Pause to watch in the native full screen player.\n"
+        @"• In full screen: press Menu to hand playback back to the page without a reload.\n"
+        @"• Menu > Full Screen Player: auto-open videos in full screen (off by default).\n"
+        @"• WebVTT subtitles carry into the full screen player automatically.";
     BrowserUsageGuideViewController *guideViewController = [[BrowserUsageGuideViewController alloc] init];
     guideViewController.guideText = guide;
     guideViewController.modalPresentationStyle = UIModalPresentationOverFullScreen;
