@@ -796,6 +796,11 @@ static NSString * const kEditableElementSelector = @"input, textarea, select, [c
                                                "var target = browserActivationTarget();"
                                                "if (!target) { return 'no-target'; }"
                                                "try { if (target.focus) { target.focus(); } } catch (error) {}"
+                                               // Hover first: some sites only materialize links on mousemove.
+                                               "dispatchPointerLikeEvent(target, 'pointerover', 'PointerEvent');"
+                                               "dispatchPointerLikeEvent(target, 'mouseover', 'MouseEvent');"
+                                               "dispatchPointerLikeEvent(target, 'pointermove', 'PointerEvent');"
+                                               "dispatchPointerLikeEvent(target, 'mousemove', 'MouseEvent');"
                                                "dispatchPointerLikeEvent(target, 'pointerdown', 'PointerEvent');"
                                                "dispatchPointerLikeEvent(target, 'mousedown', 'MouseEvent');"
                                                "dispatchPointerLikeEvent(target, 'pointerup', 'PointerEvent');"

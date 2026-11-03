@@ -269,6 +269,12 @@
                                                                              "mouseEvent.initMouseEvent(type, true, true, window, 1, x, y, x, y, false, false, false, false, 0, null);"
                                                                              "return target.dispatchEvent(mouseEvent);"
                                                                          "}"
+                                                                         // Hover first: some sites only materialize links on mousemove
+                                                                         // (e.g. <a data-link> → href set by a body mousemove handler).
+                                                                         "dispatchPointerLikeEvent('pointerover', 'PointerEvent');"
+                                                                         "dispatchPointerLikeEvent('mouseover', 'MouseEvent');"
+                                                                         "dispatchPointerLikeEvent('pointermove', 'PointerEvent');"
+                                                                         "dispatchPointerLikeEvent('mousemove', 'MouseEvent');"
                                                                          "dispatchPointerLikeEvent('pointerdown', 'PointerEvent');"
                                                                          "dispatchPointerLikeEvent('mousedown', 'MouseEvent');"
                                                                          "dispatchPointerLikeEvent('pointerup', 'PointerEvent');"
